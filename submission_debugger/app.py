@@ -2404,4 +2404,29 @@ def healthz() -> JSONResponse:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app:app", host="0.0.0.0", port=18080, reload=True)
+    host = os.environ.get("SD_HOST", "0.0.0.0").strip() or "0.0.0.0"
+    raw_port = os.environ.get("SD_PORT", "18080").strip()
+    try:
+        port = int(raw_port)
+    except ValueError:
+        port = 18080
+
+    reload_enabled = os.environ.get("SD_RELOAD", "0").strip().lower() in {"1", "true", "yes", "on"}
+    raw_workers = os.environ.get("SD_WORKERS", "1").strip()
+    try:
+        workers = max(1, int(raw_workers))
+    except ValueError:
+        workers = 1
+
+    proxy_headers = os.environ.get("SD_PROXY_HEADERS", "1").strip().lower() in {"1", "true", "yes", "on"}
+    forwarded_allow_ips = os.environ.get("SD_FORWARDED_ALLOW_IPS", "127.0.0.1").strip() or "127.0.0.1"
+
+    uvicorn.run(
+        "app:app",
+        host=host,
+        port=port,
+        reload=reload_enabled,
+        workers=(1 if reload_enabled else workers),
+        proxy_headers=proxy_headers,
+        forwarded_allow_ips=forwarded_allow_ips,
+    )

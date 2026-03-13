@@ -29,6 +29,7 @@ dataset/
 submission_*.csv
 
 # Submission debugger runtime data (DB, logs, uploads)
+submission_debugger/.env
 submission_debugger/data/debugger.db
 submission_debugger/data/server.log
 submission_debugger/data/server.pid

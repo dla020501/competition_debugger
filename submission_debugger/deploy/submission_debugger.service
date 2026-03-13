@@ -1,0 +1,17 @@
+[Unit]
+Description=Submission Debugger (FastAPI)
+After=network.target
+
+[Service]
+Type=forking
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/cvpr_competition/submission_debugger
+EnvironmentFile=/opt/cvpr_competition/submission_debugger/.env
+ExecStart=/opt/cvpr_competition/submission_debugger/scripts/start.sh
+ExecStop=/opt/cvpr_competition/submission_debugger/scripts/stop.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

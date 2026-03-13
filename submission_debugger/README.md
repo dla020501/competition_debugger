@@ -61,7 +61,7 @@ export SD_DATASET_DIR=/data/accident_dataset
 ## 실행
 
 ```bash
-cd /root/Desktop/workspace/ys/cvpr_competition/submission_debugger
+cd /root/Desktop/workspace/competition_debugger/submission_debugger
 export SD_DATASET_DIR=/data/accident_dataset   # 필요 시
 python3 -m pip install -r requirements.txt
 python3 app.py
@@ -73,6 +73,66 @@ python3 app.py
 
 학습 서버에서 실행 중이라면 방화벽/보안그룹에서 `18080` 포트를 허용하세요.
 
+## 외부 공개 운영 (권장)
+
+공개 운영은 앱 포트를 직접 노출하기보다 `Nginx -> Uvicorn` 구조를 권장합니다.
+
+### 1) 환경 파일 준비
+
+```bash
+cd /root/Desktop/workspace/competition_debugger/submission_debugger
+cp .env.example .env
+```
+
+`.env`에서 최소 아래 값을 수정하세요.
+
+- `SD_DATASET_DIR`: 실제 데이터셋 루트
+- `SD_ADMIN_USER`, `SD_ADMIN_PASS`: 초기 관리자 계정
+- `SD_COOKIE_SECURE=1`: HTTPS 환경에서 필수
+
+런타임은 Python 3.10+가 필요합니다. 기본 `python3`가 3.8인 서버라면 `.env`에 `PYTHON_BIN`을 지정하세요.
+
+```bash
+PYTHON_BIN=/opt/conda/envs/qwen35/bin/python
+```
+
+### 2) 앱 백엔드 시작
+
+```bash
+cd /root/Desktop/workspace/competition_debugger/submission_debugger
+chmod +x scripts/*.sh
+./scripts/start.sh
+./scripts/status.sh
+curl -sS http://127.0.0.1:18080/healthz
+```
+
+### 3) Nginx 리버스 프록시 연결
+
+```bash
+sudo cp deploy/nginx_submission_debugger.conf /etc/nginx/sites-available/submission_debugger
+sudo ln -s /etc/nginx/sites-available/submission_debugger /etc/nginx/sites-enabled/submission_debugger
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+`deploy/nginx_submission_debugger.conf`의 `server_name`은 도메인/IP로 바꾸세요.
+
+### 4) 방화벽 정책
+
+- 외부 공개 포트: `80`(또는 `443`)
+- 내부 앱 포트: `18080`은 localhost 바인딩 유지 권장
+
+### 5) systemd 자동시작 등록 (선택)
+
+```bash
+sudo cp deploy/submission_debugger.service /etc/systemd/system/submission_debugger.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now submission_debugger
+sudo systemctl status submission_debugger
+```
+
+`deploy/submission_debugger.service`의 `User`, `Group`, `WorkingDirectory`를 서버 환경에 맞게 수정하세요.
+
 ## 운영 절차 (권장)
 
 아래 절차는 팀원이 그대로 따라 쓰기 쉽게 만든 표준 절차입니다.
@@ -80,22 +140,23 @@ python3 app.py
 ### 1) 1회 설치
 
 ```bash
-cd /root/Desktop/workspace/ys/cvpr_competition/submission_debugger
+cd /root/Desktop/workspace/competition_debugger/submission_debugger
 /opt/conda/envs/colmap_env/bin/python -m pip install -r requirements.txt
 chmod +x scripts/*.sh
+cp .env.example .env
 ```
 
 ### 2) 서버 시작
 
 ```bash
-cd /root/Desktop/workspace/ys/cvpr_competition/submission_debugger
+cd /root/Desktop/workspace/competition_debugger/submission_debugger
 ./scripts/start.sh
 ```
 
 ### 3) 상태 확인
 
 ```bash
-cd /root/Desktop/workspace/ys/cvpr_competition/submission_debugger
+cd /root/Desktop/workspace/competition_debugger/submission_debugger
 ./scripts/status.sh
 curl -sS http://127.0.0.1:18080/healthz
 ```
@@ -133,21 +194,21 @@ export SD_ADMIN_PASS='strong_password_here'
 ### 5) 로그 확인
 
 ```bash
-cd /root/Desktop/workspace/ys/cvpr_competition/submission_debugger
+cd /root/Desktop/workspace/competition_debugger/submission_debugger
 tail -f data/server.log
 ```
 
 ### 6) 서버 중지
 
 ```bash
-cd /root/Desktop/workspace/ys/cvpr_competition/submission_debugger
+cd /root/Desktop/workspace/competition_debugger/submission_debugger
 ./scripts/stop.sh
 ```
 
 ### 7) 문제 발생 시 빠른 복구
 
 ```bash
-cd /root/Desktop/workspace/ys/cvpr_competition/submission_debugger
+cd /root/Desktop/workspace/competition_debugger/submission_debugger
 ./scripts/stop.sh
 ./scripts/start.sh
 curl -sS http://127.0.0.1:18080/healthz
