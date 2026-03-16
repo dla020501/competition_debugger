@@ -1,17 +1,21 @@
 [Unit]
 Description=Submission Debugger (FastAPI)
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-Type=forking
-User=ubuntu
-Group=ubuntu
-WorkingDirectory=/opt/cvpr_competition/submission_debugger
-EnvironmentFile=/opt/cvpr_competition/submission_debugger/.env
-ExecStart=/opt/cvpr_competition/submission_debugger/scripts/start.sh
-ExecStop=/opt/cvpr_competition/submission_debugger/scripts/stop.sh
+Type=simple
+User=milab
+Group=milab
+WorkingDirectory=/home/milab/cvpr2026cctv/team01/minseok/competition_debugger/submission_debugger
+EnvironmentFile=/home/milab/cvpr2026cctv/team01/minseok/competition_debugger/submission_debugger/.env
+ExecStart=/home/milab/cvpr2026cctv/team01/minseok/competition_debugger/submission_debugger/scripts/run_foreground.sh
 Restart=always
 RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=30
+StandardOutput=append:/home/milab/cvpr2026cctv/team01/minseok/competition_debugger/submission_debugger/data/server.log
+StandardError=append:/home/milab/cvpr2026cctv/team01/minseok/competition_debugger/submission_debugger/data/server.log
 
 [Install]
 WantedBy=multi-user.target

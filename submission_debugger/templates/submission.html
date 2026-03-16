@@ -90,6 +90,20 @@
       padding: 2px 7px;
       font-size: 11px;
     }
+    .tag-filter-builder {
+      display: grid;
+      gap: 6px;
+      min-width: 360px;
+    }
+    .tag-filter-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .tag-filter-row select {
+      min-width: 120px;
+    }
   </style>
 </head>
 <body>
@@ -112,7 +126,7 @@
     </div>
     {% endif %}
 
-    <form method="get" action="/submission" class="row toolbar">
+    <form id="submission-filter-form" method="get" action="/submission" class="row toolbar">
       <input type="hidden" name="submission" value="{{ submission }}" />
       <input type="hidden" name="source" value="{{ source }}" />
       <span class="pill">source: {{ source|upper }} (고정)</span>
@@ -125,16 +139,76 @@
           <option value="{{ qv }}" {% if quality == qv %}selected{% endif %}>{{ qv }}</option>
         {% endfor %}
       </select>
-      <label class="small">Tag</label>
-      <select id="tag" name="tag">
-        <option value="all" {% if tag == 'all' %}selected{% endif %}>all</option>
-        {% for tv in all_tags %}
-          <option value="{{ tv }}" {% if tag == tv %}selected{% endif %}>{{ tv }}</option>
+      <label class="small">Weather</label>
+      <select id="weather" name="weather">
+        <option value="all" {% if weather == 'all' %}selected{% endif %}>all</option>
+        {% for wv in weather_values %}
+          <option value="{{ wv }}" {% if weather == wv %}selected{% endif %}>{{ wv }}</option>
+        {% endfor %}
+      </select>
+      <label class="small">Day Time</label>
+      <select id="day_time" name="day_time">
+        <option value="all" {% if day_time == 'all' %}selected{% endif %}>all</option>
+        {% for dv in day_time_values %}
+          <option value="{{ dv }}" {% if day_time == dv %}selected{% endif %}>{{ dv }}</option>
+        {% endfor %}
+      </select>
+      <label class="small">Scene</label>
+      <select id="scene_layout" name="scene_layout">
+        <option value="all" {% if scene_layout == 'all' %}selected{% endif %}>all</option>
+        {% for sv in scene_layout_values %}
+          <option value="{{ sv }}" {% if scene_layout == sv %}selected{% endif %}>{{ sv }}</option>
         {% endfor %}
       </select>
       <label class="small"><input type="checkbox" name="only_labeled" value="true" {% if only_labeled %}checked{% endif %} /> only labeled</label>
       <button type="submit" class="ghost">필터 적용</button>
     </form>
+    <div class="card" style="margin-top:8px; background:#fff;">
+      <div class="row" style="justify-content: space-between;">
+        <strong>수동 태그 검색</strong>
+        <button id="add-manual-tag-filter" type="button" class="ghost">조건 추가</button>
+      </div>
+      <div class="small" style="margin-top:4px;">`AND`는 모두 포함, `OR`는 하나 이상 포함, `NOT`는 제외입니다. 이 필터는 수동 태그에만 적용되고 scene_layout 기본 태그에는 적용되지 않습니다.</div>
+      <div id="manual-tag-filter-builder" class="tag-filter-builder" style="margin-top:8px;">
+        {% if manual_tag_filters %}
+          {% for item in manual_tag_filters %}
+          <div class="tag-filter-row">
+            <select name="manual_tag_mode" form="submission-filter-form">
+              <option value="and" {% if item.mode == 'and' %}selected{% endif %}>AND</option>
+              <option value="or" {% if item.mode == 'or' %}selected{% endif %}>OR</option>
+              <option value="not" {% if item.mode == 'not' %}selected{% endif %}>NOT</option>
+            </select>
+            <select name="manual_tag_value" form="submission-filter-form">
+              <option value="">태그 선택</option>
+              {% for tv in manual_tag_values %}
+                <option value="{{ tv }}" {% if item.tag == tv %}selected{% endif %}>{{ dataset_tag_labels.get(tv, tv) }}</option>
+              {% endfor %}
+            </select>
+            <button type="button" class="ghost remove-manual-tag-filter">삭제</button>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="tag-filter-row">
+            <select name="manual_tag_mode" form="submission-filter-form">
+              <option value="and" selected>AND</option>
+              <option value="or">OR</option>
+              <option value="not">NOT</option>
+            </select>
+            <select name="manual_tag_value" form="submission-filter-form">
+              <option value="">태그 선택</option>
+              {% for tv in manual_tag_values %}
+                <option value="{{ tv }}">{{ dataset_tag_labels.get(tv, tv) }}</option>
+              {% endfor %}
+            </select>
+            <button type="button" class="ghost remove-manual-tag-filter">삭제</button>
+          </div>
+        {% endif %}
+      </div>
+      {% if not manual_tag_values %}
+      <div class="small" style="margin-top:6px;">아직 생성된 수동 태그가 없습니다.</div>
+      {% endif %}
+    </div>
+    <div class="small" style="margin-top:8px;">태그 요약에는 수동 태그와 test_metadata.csv의 scene_layout 기본 태그가 함께 표시됩니다. quality, weather, day_time, scene_layout은 별도 조건 필터로도 사용할 수 있습니다.</div>
 
     <div class="card" style="margin-top:8px; background:#fff;">
       <div class="row" style="justify-content: space-between; margin-bottom:6px;">
@@ -202,6 +276,8 @@
           <th>video_path</th>
           <th>duration</th>
           <th>quality</th>
+          <th>weather</th>
+          <th>day_time</th>
           <th>Pred</th>
           <th>Expected GT</th>
           <th>Dataset 태그/노트 요약</th>
@@ -215,6 +291,8 @@
           <td>{{ r.path }}</td>
           <td>{{ '%.2f'|format(r.duration or 0.0) }}s</td>
           <td><span class="pill">{{ r.quality }}</span></td>
+          <td><span class="pill">{{ r.weather or '-' }}</span></td>
+          <td><span class="pill">{{ r.day_time or '-' }}</span></td>
           <td>
             {% if r.pred %}
               t={{ '%.2f'|format(r.pred.accident_time or 0.0) }},
@@ -239,7 +317,7 @@
             <div>
               {% if r.dataset_tags %}
                 {% for tg in r.dataset_tags %}
-                  <span class="tag-chip">{{ tg }}</span>
+                  <span class="tag-chip">{{ dataset_tag_labels.get(tg, tg) }}</span>
                 {% endfor %}
               {% else %}
                 <span class="small">태그 없음</span>
@@ -257,6 +335,23 @@
     </table>
   </div>
 </div>
+
+<template id="manual-tag-filter-row-template">
+  <div class="tag-filter-row">
+    <select name="manual_tag_mode" form="submission-filter-form">
+      <option value="and">AND</option>
+      <option value="or">OR</option>
+      <option value="not">NOT</option>
+    </select>
+    <select name="manual_tag_value" form="submission-filter-form">
+      <option value="">태그 선택</option>
+      {% for tv in manual_tag_values %}
+        <option value="{{ tv }}">{{ dataset_tag_labels.get(tv, tv) }}</option>
+      {% endfor %}
+    </select>
+    <button type="button" class="ghost remove-manual-tag-filter">삭제</button>
+  </div>
+</template>
 
 <script>
   (function () {
@@ -281,6 +376,35 @@
       } catch (e) {
         msg.textContent = `저장 실패: ${e.message}`;
       }
+    });
+  })();
+
+  (function () {
+    const builder = document.getElementById('manual-tag-filter-builder');
+    const addBtn = document.getElementById('add-manual-tag-filter');
+    const template = document.getElementById('manual-tag-filter-row-template');
+
+    if (!builder || !addBtn || !template) return;
+
+    const bindRemove = (row) => {
+      row.querySelector('.remove-manual-tag-filter')?.addEventListener('click', () => {
+        const rows = builder.querySelectorAll('.tag-filter-row');
+        if (rows.length <= 1) {
+          row.querySelector('select[name="manual_tag_mode"]').value = 'and';
+          row.querySelector('select[name="manual_tag_value"]').value = '';
+          return;
+        }
+        row.remove();
+      });
+    };
+
+    builder.querySelectorAll('.tag-filter-row').forEach(bindRemove);
+
+    addBtn.addEventListener('click', () => {
+      const frag = template.content.cloneNode(true);
+      const row = frag.querySelector('.tag-filter-row');
+      bindRemove(row);
+      builder.appendChild(frag);
     });
   })();
 </script>

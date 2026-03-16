@@ -51,9 +51,22 @@ DEFAULT_ADMIN_PASS = os.environ.get("SD_ADMIN_PASS", "change-me")
 DATA_SOURCES = ["test", "train"]
 FORCE_SECURE_COOKIE = os.environ.get("SD_COOKIE_SECURE", "0").strip().lower() in {"1", "true", "yes", "on"}
 
-VALID_TYPES = ["head-on", "rear-end", "sideswipe", "single", "t-bone"]
+GT_TYPE_OPTIONS = [
+    {"value": "head-on", "label": "head-on", "description": "두 차량이 정면 방향으로 직접 충돌한 경우"},
+    {"value": "rear-end", "label": "rear-end", "description": "뒤따르던 차량이 앞차를 추돌한 경우"},
+    {"value": "sideswipe", "label": "sideswipe", "description": "차량 측면끼리 스치듯 접촉하거나 밀고 지나간 경우"},
+    {"value": "single", "label": "single", "description": "다른 차량과 직접 충돌 없이 단독으로 사고가 난 경우"},
+    {"value": "t-bone", "label": "t-bone", "description": "한 차량의 전면이 다른 차량 측면을 수직에 가깝게 충돌한 경우"},
+]
+VALID_TYPES = [item["value"] for item in GT_TYPE_OPTIONS]
 SUBMISSION_REQUIRED_COLUMNS = {"path", "accident_time", "center_x", "center_y", "type"}
 PERSONAL_SUBMISSION_PREFIX = "@"
+DEFAULT_METADATA_TAG_FIELDS = ("scene_layout",)
+TEST_DATASET_TAG_OPTIONS = [
+    {"value": "label_ambiguous", "label": "label 애매함"},
+    {"value": "time_ambiguous", "label": "시간 애매함"},
+]
+DATASET_TAG_LABELS = {item["value"]: item["label"] for item in TEST_DATASET_TAG_OPTIONS}
 
 app = FastAPI(title="Submission Debugger", version="0.1.0")
 app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
@@ -437,6 +450,91 @@ def normalize_single_tag(raw: str | None) -> str:
     if not tags:
         return ""
     return tags[0]
+
+
+def merge_tag_lists(*tag_lists: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for tag_list in tag_lists:
+        for raw in tag_list:
+            tag = str(raw or "").strip()
+            if not tag or tag in seen:
+                continue
+            seen.add(tag)
+            out.append(tag)
+    return out
+
+
+def build_default_metadata_tags(source: str, meta: dict[str, Any] | None) -> list[str]:
+    if source != "test" or not meta:
+        return []
+
+    tags: list[str] = []
+    for field in DEFAULT_METADATA_TAG_FIELDS:
+        field_norm = normalize_single_tag(field)
+        value_norm = normalize_single_tag(str(meta.get(field, "")))
+        if field_norm and value_norm:
+            tags.append(f"{field_norm}.{value_norm}")
+    return merge_tag_lists(tags)
+
+
+def get_dataset_tag_option_rows(source: str) -> list[dict[str, str]]:
+    if source == "test":
+        return [dict(item) for item in TEST_DATASET_TAG_OPTIONS]
+    return []
+
+
+def normalize_tag_filter_mode(raw: str | None) -> str:
+    v = str(raw or "").strip().lower()
+    if v == "or":
+        return "or"
+    if v == "not":
+        return "not"
+    return "and"
+
+
+def parse_manual_tag_filters(
+    legacy_tag: str | None,
+    raw_modes: list[str] | None,
+    raw_values: list[str] | None,
+) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for mode_raw, value_raw in zip(raw_modes or [], raw_values or []):
+        tag = normalize_single_tag(value_raw)
+        if not tag:
+            continue
+        out.append({"mode": normalize_tag_filter_mode(mode_raw), "tag": tag})
+
+    legacy_norm = normalize_single_tag(legacy_tag)
+    if legacy_norm and legacy_norm != "all" and not out:
+        out.append({"mode": "and", "tag": legacy_norm})
+    return out
+
+
+def match_manual_tag_filters(tags: list[str], filters: list[dict[str, str]]) -> bool:
+    if not filters:
+        return True
+
+    tag_set = set(tags)
+    or_tags: list[str] = []
+
+    for item in filters:
+        mode = normalize_tag_filter_mode(item.get("mode"))
+        tag = normalize_single_tag(item.get("tag"))
+        if not tag:
+            continue
+        if mode == "and":
+            if tag not in tag_set:
+                return False
+        elif mode == "not":
+            if tag in tag_set:
+                return False
+        else:
+            or_tags.append(tag)
+
+    if or_tags and not any(tag in tag_set for tag in or_tags):
+        return False
+    return True
 
 
 def set_submission_comment(username: str, submission_ref: str, comment: str) -> None:
@@ -1676,8 +1774,13 @@ def submission_page(
     source: str = "test",
     q: str = "",
     quality: str = "all",
+    weather: str = "all",
+    day_time: str = "all",
+    scene_layout: str = "all",
     only_labeled: bool = False,
     tag: str = "all",
+    manual_tag_mode: list[str] = Query(default=[]),
+    manual_tag_value: list[str] = Query(default=[]),
 ) -> HTMLResponse:
     user = get_current_user(request)
     if user is None:
@@ -1710,10 +1813,15 @@ def submission_page(
         estimated_used = int(agg.get("used") or 0)
 
     quality_values = sorted({m["quality"] for m in metadata if m.get("quality")})
+    weather_values = sorted({m["weather"] for m in metadata if m.get("weather")})
+    day_time_values = sorted({m["day_time"] for m in metadata if m.get("day_time")})
+    scene_layout_values = sorted({m["scene_layout"] for m in metadata if m.get("scene_layout")})
     q_norm = q.strip().lower()
-    selected_tag = (tag or "all").strip().lower() or "all"
+    manual_tag_filters = parse_manual_tag_filters(tag, manual_tag_mode, manual_tag_value)
 
     dataset_note_map, dataset_tags_all = get_dataset_video_notes_index(source_eff)
+    default_tags_all = sorted({tag for m in metadata for tag in build_default_metadata_tags(source_eff, m)})
+    combined_tags_all = sorted(set(dataset_tags_all) | set(default_tags_all))
     my_submission_comment = get_submission_comment(user, submission)
     my_video_comment_map = get_submission_video_comment_map(user, submission)
     submission_comment_rows = list_submission_model_comments(submission)
@@ -1735,9 +1843,17 @@ def submission_page(
             continue
         if quality != "all" and m["quality"] != quality:
             continue
+        if weather != "all" and m["weather"] != weather:
+            continue
+        if day_time != "all" and m["day_time"] != day_time:
+            continue
+        if scene_layout != "all" and m["scene_layout"] != scene_layout:
+            continue
         note_info = dataset_note_map.get(p, {"count": 0, "tags": [], "latest_comment": "", "latest_user": "", "latest_at": ""})
         note_tags = list(note_info.get("tags") or [])
-        if selected_tag != "all" and selected_tag not in note_tags:
+        default_tags = build_default_metadata_tags(source_eff, m)
+        combined_tags = merge_tag_lists(default_tags, note_tags)
+        if not match_manual_tag_filters(note_tags, manual_tag_filters):
             continue
         if only_labeled and not is_complete_gt(gt):
             continue
@@ -1752,12 +1868,15 @@ def submission_page(
                 "path": p,
                 "duration": m["duration"],
                 "quality": m["quality"],
+                "weather": m["weather"],
+                "day_time": m["day_time"],
+                "scene_layout": m["scene_layout"],
                 "pred": pred,
                 "gt": gt,
                 "score_a": score_a,
                 "my_model_comment": my_video_comment_map.get(p, ""),
                 "dataset_note_count": int(note_info.get("count") or 0),
-                "dataset_tags": note_tags,
+                "dataset_tags": combined_tags,
                 "dataset_latest_comment": str(note_info.get("latest_comment") or ""),
                 "dataset_latest_user": str(note_info.get("latest_user") or ""),
                 "dataset_latest_at": str(note_info.get("latest_at") or ""),
@@ -1773,11 +1892,20 @@ def submission_page(
             "source": source_eff,
             "rows": rows,
             "quality_values": quality_values,
+            "weather_values": weather_values,
+            "day_time_values": day_time_values,
+            "scene_layout_values": scene_layout_values,
+            "manual_tag_values": dataset_tags_all,
+            "manual_tag_filters": manual_tag_filters,
+            "dataset_tag_labels": DATASET_TAG_LABELS,
             "q": q,
             "quality": quality,
+            "weather": weather,
+            "day_time": day_time,
+            "scene_layout": scene_layout,
             "only_labeled": only_labeled,
-            "tag": selected_tag,
-            "all_tags": dataset_tags_all,
+            "tag": tag,
+            "all_tags": combined_tags_all,
             "my_submission_comment": my_submission_comment,
             "submission_comment_rows": submission_comment_rows,
             "kaggle_score": kaggle_score,
@@ -1837,7 +1965,12 @@ def video_page(
     my_submission_comment = get_submission_comment(user, submission)
     my_video_comment = get_submission_video_comment_map(user, submission).get(video_path, "")
     model_video_comments = list_submission_video_comments(submission, video_path)
-    dataset_notes, dataset_tags = list_dataset_video_notes(source_eff, video_path)
+    dataset_notes, dataset_user_tags = list_dataset_video_notes(source_eff, video_path)
+    default_dataset_tags = build_default_metadata_tags(source_eff, metadata_rows[video_path])
+    dataset_tags = merge_tag_lists(default_dataset_tags, dataset_user_tags)
+    default_dataset_tag_set = set(default_dataset_tags)
+    dataset_user_tags_visible = [t for t in dataset_user_tags if t not in default_dataset_tag_set]
+    dataset_tag_option_rows = get_dataset_tag_option_rows(source_eff)
 
     initial_payload = {
         "user": user,
@@ -1866,11 +1999,16 @@ def video_page(
             "source": source_eff,
             "can_edit_gt": source_eff == "test",
             "video_path": video_path,
+            "gt_type_options": GT_TYPE_OPTIONS,
             "my_submission_comment": my_submission_comment,
             "my_video_comment": my_video_comment,
             "model_video_comments": model_video_comments,
             "dataset_notes": dataset_notes,
             "dataset_tags": dataset_tags,
+            "dataset_user_tags": dataset_user_tags_visible,
+            "default_dataset_tags": default_dataset_tags,
+            "dataset_tag_labels": DATASET_TAG_LABELS,
+            "dataset_tag_option_rows": dataset_tag_option_rows,
         },
     )
 

@@ -2,6 +2,9 @@
   const payload = JSON.parse(document.getElementById("payload").textContent);
   const video = document.getElementById("video");
   const canvas = document.getElementById("overlay");
+  const videoWrap = document.getElementById("video-wrap");
+  const videoHudEl = document.getElementById("video-hud");
+  const zoomSelectionBoxEl = document.getElementById("zoom-selection-box");
   const ctx = canvas.getContext("2d");
 
   const pred = payload.pred || {};
@@ -35,18 +38,73 @@
   const toggleEditModeBtn = document.getElementById("toggle-edit-mode");
   const editModeStatusEl = document.getElementById("edit-mode-status");
   const playbackTimeDisplayEl = document.getElementById("playback-time-display");
+  const playbackRateButtons = Array.from(document.querySelectorAll("[data-playback-rate]"));
+  const playbackRateStatusEl = document.getElementById("playback-rate-status");
   const setTimeFromVideoBtn = document.getElementById("sync-time-from-video");
   const videoStatusEl = document.getElementById("video-status");
   const openVideoDirectEl = document.getElementById("open-video-direct");
+  const zoomModeEl = document.getElementById("zoom-mode");
+  const toggleZoomModeBtn = document.getElementById("toggle-zoom-mode");
+  const resetZoomBtn = document.getElementById("reset-zoom");
+  const zoomStateEl = document.getElementById("zoom-state");
 
   let isDraggingGt = false;
+  let isDraggingZoom = false;
   let hoverPoint = null;
   let loadTimeoutId = null;
+  let zoomSelectionStart = null;
+  let zoomPreviewRect = null;
+  let zoomRect = null;
+  let zoomTransform = { scale: 1, tx: 0, ty: 0 };
+  let lastVideoHudText = "";
   const serverCanEdit = !saveMsg || !document.getElementById("save-gt")?.disabled;
+  const MIN_ZOOM_RECT_SIZE = 0.05;
+  const ZOOM_PADDING_FACTOR = 1.15;
+  const MAX_ZOOM_SCALE = 6;
+  const PLAYBACK_RATE_STORAGE_KEY = "video_playback_rate";
 
   function num(v, fallback = null) {
     const x = Number(v);
     return Number.isFinite(x) ? x : fallback;
+  }
+
+  function clamp(v, min, max) {
+    return Math.max(min, Math.min(max, v));
+  }
+
+  function formatPlaybackRate(rate) {
+    return `${Number(rate).toFixed(2).replace(/\.?0+$/, "")}x`;
+  }
+
+  function syncPlaybackRateUI(rate) {
+    const normalized = String(rate);
+    playbackRateButtons.forEach((button) => {
+      const active = button.dataset.playbackRate === normalized;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    if (playbackRateStatusEl) {
+      playbackRateStatusEl.textContent = `현재 ${formatPlaybackRate(rate)}`;
+    }
+  }
+
+  function applyPlaybackRate(nextRate, { persist = true } = {}) {
+    const rate = clamp(num(nextRate, 1), 0.25, 2);
+    video.defaultPlaybackRate = rate;
+    video.playbackRate = rate;
+    syncPlaybackRateUI(rate);
+    if (persist) {
+      localStorage.setItem(PLAYBACK_RATE_STORAGE_KEY, String(rate));
+    }
+  }
+
+  function loadSavedPlaybackRate() {
+    const saved = localStorage.getItem(PLAYBACK_RATE_STORAGE_KEY);
+    if (!saved) {
+      syncPlaybackRateUI(1);
+      return;
+    }
+    applyPlaybackRate(saved, { persist: false });
   }
 
   function syncFormFromGt() {
@@ -66,13 +124,134 @@
     return !!(serverCanEdit && editModeEl && editModeEl.checked);
   }
 
+  function isZoomSelectEnabled() {
+    return !!(zoomModeEl && zoomModeEl.checked);
+  }
+
+  function rectFromPoints(a, b) {
+    const x1 = Math.min(a.x, b.x);
+    const y1 = Math.min(a.y, b.y);
+    const x2 = Math.max(a.x, b.x);
+    const y2 = Math.max(a.y, b.y);
+    return {
+      x: clamp(x1, 0, 1),
+      y: clamp(y1, 0, 1),
+      w: clamp(x2 - x1, 0, 1),
+      h: clamp(y2 - y1, 0, 1),
+    };
+  }
+
+  function expandRect(rect, factor) {
+    if (!rect) {
+      return null;
+    }
+    const cx = rect.x + rect.w / 2;
+    const cy = rect.y + rect.h / 2;
+    const w = clamp(rect.w * factor, MIN_ZOOM_RECT_SIZE, 1);
+    const h = clamp(rect.h * factor, MIN_ZOOM_RECT_SIZE, 1);
+    return {
+      x: clamp(cx - w / 2, 0, 1 - w),
+      y: clamp(cy - h / 2, 0, 1 - h),
+      w,
+      h,
+    };
+  }
+
+  function applyZoomTransform() {
+    const baseWidth = canvas.width || Math.max(1, Math.round(videoWrap?.clientWidth || video.clientWidth || 1));
+    const baseHeight = canvas.height || Math.max(1, Math.round(videoWrap?.clientHeight || video.clientHeight || 1));
+    if (!zoomRect) {
+      zoomTransform = { scale: 1, tx: 0, ty: 0 };
+    } else {
+      const padded = expandRect(zoomRect, ZOOM_PADDING_FACTOR) || zoomRect;
+      const scale = clamp(Math.min(1 / Math.max(padded.w, 1e-6), 1 / Math.max(padded.h, 1e-6)), 1, MAX_ZOOM_SCALE);
+      const centerX = (padded.x + padded.w / 2) * baseWidth;
+      const centerY = (padded.y + padded.h / 2) * baseHeight;
+      const minTx = baseWidth - baseWidth * scale;
+      const minTy = baseHeight - baseHeight * scale;
+      zoomTransform = {
+        scale,
+        tx: clamp(baseWidth / 2 - scale * centerX, minTx, 0),
+        ty: clamp(baseHeight / 2 - scale * centerY, minTy, 0),
+      };
+    }
+    const { scale, tx, ty } = zoomTransform;
+    const matrix = `matrix(${scale}, 0, 0, ${scale}, ${tx}, ${ty})`;
+    video.style.transform = matrix;
+    canvas.style.transform = matrix;
+    syncZoomSelectionBox();
+    if (resetZoomBtn) {
+      resetZoomBtn.disabled = !zoomRect;
+    }
+  }
+
+  function setZoomRect(nextRect) {
+    zoomRect = nextRect;
+    applyZoomTransform();
+  }
+
+  function clearZoomPreview() {
+    zoomSelectionStart = null;
+    zoomPreviewRect = null;
+    isDraggingZoom = false;
+    syncZoomSelectionBox();
+  }
+
+  function resetZoom() {
+    setZoomRect(null);
+    clearZoomPreview();
+    if (zoomModeEl) {
+      zoomModeEl.checked = false;
+    }
+    applyEditModeUI();
+    showVideoSuccess("확대 해제");
+  }
+
+  function updateVideoHud(text) {
+    if (!videoHudEl) {
+      return;
+    }
+    const nextText = text || "";
+    videoHudEl.hidden = !nextText;
+    if (nextText === lastVideoHudText) {
+      return;
+    }
+    lastVideoHudText = nextText;
+    videoHudEl.textContent = nextText;
+  }
+
+  function syncZoomSelectionBox() {
+    if (!zoomSelectionBoxEl) {
+      return;
+    }
+    if (!zoomPreviewRect || !isZoomSelectEnabled()) {
+      zoomSelectionBoxEl.hidden = true;
+      return;
+    }
+
+    const baseWidth = Math.max(canvas.width, 1);
+    const baseHeight = Math.max(canvas.height, 1);
+    const { scale, tx, ty } = zoomTransform;
+    const left = zoomPreviewRect.x * baseWidth * scale + tx;
+    const top = zoomPreviewRect.y * baseHeight * scale + ty;
+    const width = zoomPreviewRect.w * baseWidth * scale;
+    const height = zoomPreviewRect.h * baseHeight * scale;
+
+    zoomSelectionBoxEl.style.left = `${left}px`;
+    zoomSelectionBoxEl.style.top = `${top}px`;
+    zoomSelectionBoxEl.style.width = `${width}px`;
+    zoomSelectionBoxEl.style.height = `${height}px`;
+    zoomSelectionBoxEl.hidden = width <= 0 || height <= 0;
+  }
+
   function applyEditModeUI() {
     const enabled = isEditEnabled();
+    const zoomSelecting = isZoomSelectEnabled();
     if (editModeEl && editModeEl.checked && !serverCanEdit) {
       editModeEl.checked = false;
     }
-    canvas.style.pointerEvents = enabled ? "auto" : "none";
-    canvas.style.cursor = enabled ? "crosshair" : "default";
+    canvas.style.pointerEvents = (enabled || zoomSelecting) ? "auto" : "none";
+    canvas.style.cursor = (enabled || zoomSelecting) ? "crosshair" : "default";
     if (enabled && showGtEl) {
       showGtEl.checked = true;
     }
@@ -80,9 +259,14 @@
       toggleEditModeBtn.textContent = enabled ? "편집 모드: ON" : "편집 모드: OFF";
       toggleEditModeBtn.disabled = !serverCanEdit;
     }
+    if (toggleZoomModeBtn) {
+      toggleZoomModeBtn.textContent = zoomSelecting ? "영역 확대 선택: ON" : "영역 확대 선택: OFF";
+    }
     if (editModeStatusEl) {
       if (!serverCanEdit) {
         editModeStatusEl.textContent = "이 소스는 읽기 전용입니다.";
+      } else if (zoomSelecting) {
+        editModeStatusEl.textContent = "확대 영역 선택 모드";
       } else {
         editModeStatusEl.textContent = enabled ? "드래그 편집 활성화" : "재생/탐색 모드";
       }
@@ -101,15 +285,30 @@
       gtPanelEl.classList.toggle("panel-disabled", !enabled);
     }
     if (cursorPos) {
-      cursorPos.textContent = enabled
-        ? "편집 모드: 마우스를 움직이면 GT 마커가 따라오고, 드래그하면 위치를 반영합니다."
-        : "오버레이 보기 모드";
+      if (zoomSelecting) {
+        cursorPos.textContent = "확대할 영역을 드래그해서 지정하세요.";
+      } else if (enabled) {
+        cursorPos.textContent = "편집 모드: 마우스를 움직이면 GT 마커가 따라오고, 드래그하면 위치를 반영합니다.";
+      } else {
+        cursorPos.textContent = "오버레이 보기 모드";
+      }
     }
     if (saveState) {
       if (!enabled) {
         saveState.textContent = saveState.textContent || "읽기 전용 보기 모드";
       } else {
         saveState.textContent = "편집 중: 드래그 후 저장을 눌러 확정하세요.";
+      }
+    }
+    if (zoomStateEl) {
+      if (zoomSelecting) {
+        zoomStateEl.textContent = zoomRect
+          ? "드래그해서 새 확대 영역을 지정하세요."
+          : "드래그해서 확대할 영역을 지정하세요.";
+      } else if (zoomRect) {
+        zoomStateEl.textContent = `확대 적용 중 (${zoomTransform.scale.toFixed(2)}x). 확대 해제로 전체 화면으로 복귀합니다.`;
+      } else {
+        zoomStateEl.textContent = "전체 화면";
       }
     }
     hoverPoint = null;
@@ -160,38 +359,41 @@
   }
 
   function pointFromEvent(e) {
-    const rect = canvas.getBoundingClientRect();
+    const rect = videoWrap.getBoundingClientRect();
+    const baseWidth = Math.max(canvas.width, 1);
+    const baseHeight = Math.max(canvas.height, 1);
+    const px = clamp(e.clientX - rect.left, 0, rect.width);
+    const py = clamp(e.clientY - rect.top, 0, rect.height);
     return {
-      x: Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)),
-      y: Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)),
+      x: clamp((px - zoomTransform.tx) / (baseWidth * zoomTransform.scale), 0, 1),
+      y: clamp((py - zoomTransform.ty) / (baseHeight * zoomTransform.scale), 0, 1),
     };
   }
 
   function drawInfo() {
     const t = video.currentTime || 0;
     const renderGt = getRenderGt();
-    const lines = [
-      `t=${t.toFixed(2)}s`,
-      `A: time=${(pred.accident_time ?? 0).toFixed ? pred.accident_time.toFixed(2) : pred.accident_time}, type=${pred.type ?? "-"}`,
-      `B: time=${(predB.accident_time ?? 0).toFixed ? predB.accident_time.toFixed(2) : predB.accident_time}, type=${predB.type ?? "-"}`,
-      `C: time=${(predC.accident_time ?? 0).toFixed ? predC.accident_time.toFixed(2) : predC.accident_time}, type=${predC.type ?? "-"}`,
-      `GT: time=${(renderGt.accident_time ?? 0).toFixed ? renderGt.accident_time.toFixed(2) : renderGt.accident_time}, type=${renderGt.type ?? "-"}`,
-    ];
+    const lines = [];
+    if (showAEl.checked) {
+      lines.push(`A: time=${(pred.accident_time ?? 0).toFixed ? pred.accident_time.toFixed(2) : pred.accident_time}, type=${pred.type ?? "-"}`);
+    }
+    if (showBEl.checked) {
+      lines.push(`B: time=${(predB.accident_time ?? 0).toFixed ? predB.accident_time.toFixed(2) : predB.accident_time}, type=${predB.type ?? "-"}`);
+    }
+    if (showCEl.checked) {
+      lines.push(`C: time=${(predC.accident_time ?? 0).toFixed ? predC.accident_time.toFixed(2) : predC.accident_time}, type=${predC.type ?? "-"}`);
+    }
+    if (showGtEl.checked) {
+      lines.push(`GT: time=${(renderGt.accident_time ?? 0).toFixed ? renderGt.accident_time.toFixed(2) : renderGt.accident_time}, type=${renderGt.type ?? "-"}`);
+    }
+    updateVideoHud(lines.join("\n"));
 
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
-    ctx.fillRect(6, 6, 460, 108);
-    ctx.fillStyle = "#f8fafc";
-    ctx.font = "12px monospace";
-    lines.forEach((line, i) => {
-      ctx.fillText(line, 12, 24 + i * 18);
-    });
-
-    if (pred.accident_time != null && Math.abs(t - pred.accident_time) < 0.2) {
+    if (showAEl.checked && pred.accident_time != null && Math.abs(t - pred.accident_time) < 0.2) {
       ctx.strokeStyle = "#facc15";
       ctx.lineWidth = 6;
       ctx.strokeRect(3, 3, canvas.width - 6, canvas.height - 6);
     }
-    if (renderGt.accident_time != null && Math.abs(t - renderGt.accident_time) < 0.2) {
+    if (showGtEl.checked && renderGt.accident_time != null && Math.abs(t - renderGt.accident_time) < 0.2) {
       ctx.strokeStyle = "#22c55e";
       ctx.lineWidth = 3;
       ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
@@ -199,7 +401,7 @@
   }
 
   function drawEditGuide() {
-    if (!isEditEnabled()) {
+    if (!isEditEnabled() || zoomRect) {
       return;
     }
     ctx.fillStyle = "rgba(15, 23, 42, 0.35)";
@@ -207,6 +409,33 @@
     ctx.fillStyle = "#f8fafc";
     ctx.font = "12px sans-serif";
     ctx.fillText("드래그하여 GT 위치 지정", 18, canvas.height - 22);
+  }
+
+  function drawZoomGuide() {
+    const rect = zoomRect;
+    if (!rect || rect.w <= 0 || rect.h <= 0) {
+      return;
+    }
+
+    const x = rect.x * canvas.width;
+    const y = rect.y * canvas.height;
+    const w = rect.w * canvas.width;
+    const h = rect.h * canvas.height;
+
+    ctx.save();
+    ctx.fillStyle = "rgba(34, 211, 238, 0.00)";
+    ctx.strokeStyle = "#06b6d4";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([10, 6]);
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(8, 47, 73, 0.72)";
+    ctx.fillRect(x, Math.max(0, y - 24), 104, 18);
+    ctx.fillStyle = "#ecfeff";
+    ctx.font = "bold 11px sans-serif";
+    ctx.fillText("ZOOM", x + 8, Math.max(12, y - 11));
+    ctx.restore();
   }
 
   function renderHUDText() {
@@ -217,13 +446,19 @@
     predText.textContent = `${lineA}\n${lineB}\n${lineC}`;
     gtText.textContent = `GT: t=${renderGt.accident_time ?? "-"}, x=${renderGt.center_x ?? "-"}, y=${renderGt.center_y ?? "-"}, type=${renderGt.type ?? "-"}, by=${gt.updated_by ?? "-"}`;
     const m = payload.meta || {};
-    metaText.textContent = `duration=${m.duration ?? "-"}s, quality=${m.quality ?? "-"}, scene=${m.scene_layout ?? "-"}, weather=${m.weather ?? "-"}`;
+    metaText.textContent = `duration=${m.duration ?? "-"}s, quality=${m.quality ?? "-"}, weather=${m.weather ?? "-"}, day_time=${m.day_time ?? "-"}, scene=${m.scene_layout ?? "-"}`;
   }
 
   function resizeCanvas() {
-    const rect = video.getBoundingClientRect();
-    canvas.width = Math.max(1, Math.round(rect.width));
-    canvas.height = Math.max(1, Math.round(rect.height));
+    const rect = videoWrap.getBoundingClientRect();
+    const nextWidth = Math.max(1, Math.round(rect.width || video.clientWidth || 1));
+    const nextHeight = Math.max(1, Math.round(rect.height || video.clientHeight || 1));
+    const sizeChanged = canvas.width !== nextWidth || canvas.height !== nextHeight;
+    if (sizeChanged) {
+      canvas.width = nextWidth;
+      canvas.height = nextHeight;
+      applyZoomTransform();
+    }
   }
 
   function showVideoStatus(text) {
@@ -311,6 +546,7 @@
         drawMarker(renderGt.center_x, renderGt.center_y, "#22c55e", "GT");
       }
     }
+    drawZoomGuide();
     drawEditGuide();
     drawInfo();
     requestAnimationFrame(draw);
@@ -334,6 +570,9 @@
   }
 
   canvas.addEventListener("click", (e) => {
+    if (isZoomSelectEnabled()) {
+      return;
+    }
     if (!isEditEnabled()) {
       return;
     }
@@ -344,6 +583,16 @@
   });
 
   canvas.addEventListener("mousedown", (e) => {
+    if (isZoomSelectEnabled()) {
+      isDraggingZoom = true;
+      zoomSelectionStart = pointFromEvent(e);
+      zoomPreviewRect = { x: zoomSelectionStart.x, y: zoomSelectionStart.y, w: 0, h: 0 };
+      syncZoomSelectionBox();
+      if (cursorPos) {
+        cursorPos.textContent = `확대 시작 좌표: x=${zoomSelectionStart.x.toFixed(4)}, y=${zoomSelectionStart.y.toFixed(4)}`;
+      }
+      return;
+    }
     if (!isEditEnabled()) {
       return;
     }
@@ -356,6 +605,19 @@
   });
 
   canvas.addEventListener("mousemove", (e) => {
+    if (isZoomSelectEnabled()) {
+      const p = pointFromEvent(e);
+      if (isDraggingZoom && zoomSelectionStart) {
+        zoomPreviewRect = rectFromPoints(zoomSelectionStart, p);
+        syncZoomSelectionBox();
+        if (cursorPos) {
+          cursorPos.textContent = `확대 후보: x=${zoomPreviewRect.x.toFixed(4)}, y=${zoomPreviewRect.y.toFixed(4)}, w=${zoomPreviewRect.w.toFixed(4)}, h=${zoomPreviewRect.h.toFixed(4)}`;
+        }
+      } else if (cursorPos) {
+        cursorPos.textContent = `확대 미리보기 좌표: x=${p.x.toFixed(4)}, y=${p.y.toFixed(4)}`;
+      }
+      return;
+    }
     if (!isEditEnabled()) {
       return;
     }
@@ -370,6 +632,23 @@
   });
 
   window.addEventListener("mouseup", () => {
+    if (isDraggingZoom) {
+      isDraggingZoom = false;
+      if (zoomPreviewRect && zoomPreviewRect.w >= MIN_ZOOM_RECT_SIZE && zoomPreviewRect.h >= MIN_ZOOM_RECT_SIZE) {
+        setZoomRect(zoomPreviewRect);
+        if (zoomModeEl) {
+          zoomModeEl.checked = false;
+        }
+        showVideoSuccess("선택 영역 확대 적용");
+      } else if (zoomPreviewRect) {
+        if (zoomStateEl) {
+          zoomStateEl.textContent = "선택 영역이 너무 작습니다. 더 넓게 드래그해 주세요.";
+        }
+      }
+      clearZoomPreview();
+      applyEditModeUI();
+      return;
+    }
     if (isDraggingGt && saveMsg) {
       saveMsg.textContent = "드래그 완료. 저장 버튼을 누르면 서버에 반영됩니다.";
     }
@@ -377,8 +656,10 @@
   });
 
   canvas.addEventListener("mouseleave", () => {
+    if (!isDraggingZoom) {
+      hoverPoint = null;
+    }
     isDraggingGt = false;
-    hoverPoint = null;
   });
 
   [tEl, cxEl, cyEl, typeEl, noteEl].forEach((el) => {
@@ -395,6 +676,10 @@
   });
 
   editModeEl?.addEventListener("change", () => {
+    if (editModeEl.checked && zoomModeEl) {
+      zoomModeEl.checked = false;
+      clearZoomPreview();
+    }
     applyEditModeUI();
     renderHUDText();
   });
@@ -403,9 +688,35 @@
     if (!editModeEl) {
       return;
     }
+    if (!editModeEl.checked && zoomModeEl) {
+      zoomModeEl.checked = false;
+      clearZoomPreview();
+    }
     editModeEl.checked = !editModeEl.checked;
     applyEditModeUI();
     renderHUDText();
+  });
+
+  toggleZoomModeBtn?.addEventListener("click", () => {
+    if (!zoomModeEl) {
+      return;
+    }
+    zoomModeEl.checked = !zoomModeEl.checked;
+    if (zoomModeEl.checked && editModeEl) {
+      editModeEl.checked = false;
+    }
+    clearZoomPreview();
+    applyEditModeUI();
+  });
+
+  resetZoomBtn?.addEventListener("click", () => {
+    resetZoom();
+  });
+
+  playbackRateButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      applyPlaybackRate(button.dataset.playbackRate || "1");
+    });
   });
 
   setTimeFromVideoBtn?.addEventListener("click", () => {
@@ -426,6 +737,12 @@
     }
   });
 
+  video.addEventListener("ratechange", () => {
+    const rate = clamp(num(video.playbackRate, 1), 0.25, 2);
+    syncPlaybackRateUI(rate);
+    localStorage.setItem(PLAYBACK_RATE_STORAGE_KEY, String(rate));
+  });
+
   video.addEventListener("error", () => {
     const err = video.error;
     const code = err ? err.code : "unknown";
@@ -433,6 +750,7 @@
   });
 
   video.addEventListener("loadeddata", () => {
+    applyPlaybackRate(localStorage.getItem(PLAYBACK_RATE_STORAGE_KEY) || "1", { persist: false });
     showVideoSuccess("비디오 로드 완료");
     if (loadTimeoutId) {
       clearTimeout(loadTimeoutId);
@@ -559,6 +877,7 @@
   }
   syncFormFromGt();
   syncDraftFromForm();
+  loadSavedPlaybackRate();
   if (editModeEl) {
     editModeEl.checked = false;
   }

@@ -39,8 +39,32 @@
     }
     #gt-panel { position: sticky; top: 12px; align-self: start; }
     .video-wrap { position: relative; width: 100%; background: black; border-radius: 10px; overflow: hidden; }
-    video { width: 100%; max-height: 72vh; display: block; }
-    canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+    video { width: 100%; max-height: 72vh; display: block; transform-origin: 0 0; }
+    canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; transform-origin: 0 0; z-index: 1; }
+    .video-hud {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      z-index: 2;
+      min-width: 320px;
+      max-width: min(92%, 460px);
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.58);
+      color: #f8fafc;
+      font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace;
+      white-space: pre-line;
+      pointer-events: none;
+    }
+    .zoom-selection-box {
+      position: absolute;
+      z-index: 3;
+      border: 2px dashed #22d3ee;
+      background: rgba(34, 211, 238, 0.16);
+      box-shadow: 0 0 0 9999px rgba(8, 47, 73, 0.18);
+      pointer-events: none;
+      border-radius: 4px;
+    }
     .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
     label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
     input, select, button, textarea { font: inherit; padding: 7px 9px; border-radius: 10px; border: 1px solid var(--line); }
@@ -86,6 +110,64 @@
       padding: 2px 7px;
       font-size: 11px;
     }
+    .type-help {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.72);
+    }
+    .type-help-item + .type-help-item {
+      margin-top: 4px;
+    }
+    .type-help-label {
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .inline-field {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 6px;
+    }
+    .playback-rate-group {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+    .playback-rate-btn {
+      min-width: 48px;
+      padding: 5px 8px;
+      border-radius: 999px;
+    }
+    .playback-rate-btn.active {
+      background: linear-gradient(180deg, var(--accent), var(--accent-2));
+      color: #fff;
+      border-color: transparent;
+      box-shadow: 0 4px 12px rgba(15, 118, 110, 0.22);
+    }
+    .overlay-toggle-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+    }
+    .overlay-toggle {
+      display: inline-flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 4px;
+      white-space: nowrap;
+      color: var(--muted);
+    }
+    .overlay-toggle input {
+      width: 14px;
+      height: 14px;
+      padding: 0;
+      margin: 0;
+    }
     @media (max-width: 980px) {
       .grid { grid-template-columns: 1fr; }
       #gt-panel { position: static; }
@@ -107,22 +189,43 @@
       <div class="video-wrap" id="video-wrap">
         <video id="video" controls preload="metadata" src="/media?source={{ source }}&video_path={{ video_path|urlencode }}"></video>
         <canvas id="overlay"></canvas>
+        <div id="video-hud" class="video-hud"></div>
+        <div id="zoom-selection-box" class="zoom-selection-box" hidden></div>
       </div>
       <div class="row" style="margin-top:8px;">
         <button id="seek-pred" class="ghost" type="button">Pred 시점으로 이동</button>
         <button id="seek-pred-b" class="ghost" type="button">Pred-B 시점</button>
         <button id="seek-pred-c" class="ghost" type="button">Pred-C 시점</button>
         <button id="seek-gt" class="ghost" type="button">GT 시점으로 이동</button>
-        <label><input id="show-a" type="checkbox" checked /> A</label>
-        <label><input id="show-b" type="checkbox" checked /> B</label>
-        <label><input id="show-c" type="checkbox" checked /> C</label>
-        <label><input id="show-gt" type="checkbox" checked /> GT</label>
+        <input id="zoom-mode" type="checkbox" style="display:none;" />
+        <button id="toggle-zoom-mode" class="ghost" type="button">영역 확대 선택: OFF</button>
+        <button id="reset-zoom" class="ghost" type="button">확대 해제</button>
+        <div class="overlay-toggle-group" role="group" aria-label="오버레이 표시">
+          <label class="overlay-toggle"><input id="show-a" type="checkbox" checked /> A</label>
+          <label class="overlay-toggle"><input id="show-b" type="checkbox" checked /> B</label>
+          <label class="overlay-toggle"><input id="show-c" type="checkbox" checked /> C</label>
+          <label class="overlay-toggle"><input id="show-gt" type="checkbox" checked /> GT</label>
+        </div>
         <span class="small" id="cursor-pos">오버레이 보기 모드</span>
       </div>
       <div class="row" style="margin-top:4px; gap:6px;">
         <div class="small" id="video-status" style="flex:1;"></div>
+        <div class="small inline-field">
+          <span>재생 배속</span>
+          <div class="playback-rate-group" role="group" aria-label="재생 배속">
+            <button type="button" class="ghost playback-rate-btn" data-playback-rate="0.25">0.25x</button>
+            <button type="button" class="ghost playback-rate-btn" data-playback-rate="0.5">0.5x</button>
+            <button type="button" class="ghost playback-rate-btn" data-playback-rate="0.75">0.75x</button>
+            <button type="button" class="ghost playback-rate-btn active" data-playback-rate="1">1.0x</button>
+            <button type="button" class="ghost playback-rate-btn" data-playback-rate="1.25">1.25x</button>
+            <button type="button" class="ghost playback-rate-btn" data-playback-rate="1.5">1.5x</button>
+            <button type="button" class="ghost playback-rate-btn" data-playback-rate="2">2.0x</button>
+          </div>
+        </div>
+        <span class="small" id="playback-rate-status">현재 1.0x</span>
         <a id="open-video-direct" class="small" target="_blank" rel="noopener noreferrer">직접 열기</a>
       </div>
+      <div class="small" id="zoom-state">전체 화면</div>
     </div>
 
     <div class="card" id="gt-panel">
@@ -158,13 +261,19 @@
         <label>type
           <select id="gt_type" {% if not can_edit_gt %}disabled{% endif %}>
             <option value="">(none)</option>
-            <option>head-on</option>
-            <option>rear-end</option>
-            <option>sideswipe</option>
-            <option>single</option>
-            <option>t-bone</option>
+            {% for item in gt_type_options %}
+            <option value="{{ item.value }}">{{ item.label }}</option>
+            {% endfor %}
           </select>
         </label>
+      </div>
+      <div class="type-help small">
+        <strong>사고 유형 설명</strong>
+        {% for item in gt_type_options %}
+        <div class="type-help-item">
+          <span class="type-help-label">{{ item.label }}</span>: {{ item.description }}
+        </div>
+        {% endfor %}
       </div>
       <div class="row">
         <label style="width:100%;">note
@@ -254,21 +363,33 @@
 
     <div style="margin-top:10px; border-top:1px solid #e5ddcf; padding-top:10px;">
       <div><strong>데이터셋 코멘트 / 태그 (공유)</strong></div>
-      <div class="small" style="margin-top:4px;">태그는 모든 사용자에게 공유되며, 삭제 시 전체 사용자 화면에서 즉시 제거됩니다.</div>
+      <div class="small" style="margin-top:4px;">test source에서는 test_metadata.csv의 scene_layout만 기본 태그로 자동 표시됩니다. 수동 태그는 선택형으로 추가하고, 삭제는 수동 태그만 가능합니다.</div>
 
       <div style="margin-top:8px;">
-        <strong class="small">공유 태그</strong>
+        <strong class="small">태그</strong>
         <div style="margin-top:6px;">
           {% if dataset_tags %}
-            {% for t in dataset_tags %}
-              <span class="tag-chip">{{ t }} <button type="button" class="ghost dataset-tag-remove" data-tag="{{ t }}" style="padding:1px 6px; margin-left:4px;">x</button></span>
+            {% for t in default_dataset_tags %}
+              <span class="tag-chip" style="background:#ecfeff; border-color:#99f6e4;">{{ dataset_tag_labels.get(t, t) }}</span>
+            {% endfor %}
+            {% for t in dataset_user_tags %}
+              <span class="tag-chip">{{ dataset_tag_labels.get(t, t) }} <button type="button" class="ghost dataset-tag-remove" data-tag="{{ t }}" style="padding:1px 6px; margin-left:4px;">x</button></span>
             {% endfor %}
           {% else %}
             <span class="small">현재 태그 없음</span>
           {% endif %}
         </div>
         <div class="row" style="margin-top:6px;">
-          <input id="dataset-new-tag" style="min-width:260px;" placeholder="태그 추가 (예: night, rain)" />
+          {% if dataset_tag_option_rows %}
+          <select id="dataset-new-tag" style="min-width:260px;">
+            <option value="">태그 선택</option>
+            {% for opt in dataset_tag_option_rows %}
+              <option value="{{ opt.value }}">{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+          {% else %}
+          <input id="dataset-new-tag" style="min-width:260px;" placeholder="태그 추가" />
+          {% endif %}
           <button id="add-dataset-tag" type="button">태그 추가</button>
         </div>
       </div>
@@ -380,7 +501,7 @@
   document.getElementById('add-dataset-tag')?.addEventListener('click', async () => {
     const tag = (document.getElementById('dataset-new-tag')?.value || '').trim();
     if (!tag) {
-      datasetNoteMsg.textContent = '추가할 태그를 입력하세요.';
+      datasetNoteMsg.textContent = '추가할 태그를 선택하세요.';
       return;
     }
     datasetNoteMsg.textContent = '태그 추가 중...';
