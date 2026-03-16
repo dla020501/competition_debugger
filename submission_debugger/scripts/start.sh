@@ -14,7 +14,7 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 
-PYTHON_BIN="${PYTHON_BIN:-/opt/conda/envs/colmap_env/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 SD_HOST="${SD_HOST:-0.0.0.0}"
 SD_PORT="${SD_PORT:-18080}"
@@ -64,7 +64,8 @@ else
   CMD+=(--no-proxy-headers)
 fi
 
-nohup "${CMD[@]}" > "$LOG_FILE" 2>&1 &
+# Detach into a new session so the server survives shell exit in non-interactive launches.
+setsid "${CMD[@]}" > "$LOG_FILE" 2>&1 < /dev/null &
 NEW_PID=$!
 echo "$NEW_PID" > "$PID_FILE"
 

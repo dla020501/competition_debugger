@@ -12,7 +12,7 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 
-PYTHON_BIN="${PYTHON_BIN:-/home/milab/miniconda3/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 SD_HOST="${SD_HOST:-0.0.0.0}"
 SD_PORT="${SD_PORT:-18080}"
 SD_WORKERS="${SD_WORKERS:-1}"

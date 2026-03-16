@@ -64,6 +64,7 @@ PERSONAL_SUBMISSION_PREFIX = "@"
 DEFAULT_METADATA_TAG_FIELDS = ("scene_layout",)
 TEST_DATASET_TAG_OPTIONS = [
     {"value": "label_ambiguous", "label": "label 애매함"},
+    {"value": "time_ambiguous", "label": "시간 애매함"},
 ]
 DATASET_TAG_LABELS = {item["value"]: item["label"] for item in TEST_DATASET_TAG_OPTIONS}
 

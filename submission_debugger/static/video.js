@@ -211,11 +211,13 @@
     if (!videoHudEl) {
       return;
     }
-    if (text === lastVideoHudText) {
+    const nextText = text || "";
+    videoHudEl.hidden = !nextText;
+    if (nextText === lastVideoHudText) {
       return;
     }
-    lastVideoHudText = text;
-    videoHudEl.textContent = text;
+    lastVideoHudText = nextText;
+    videoHudEl.textContent = nextText;
   }
 
   function syncZoomSelectionBox() {
@@ -371,21 +373,27 @@
   function drawInfo() {
     const t = video.currentTime || 0;
     const renderGt = getRenderGt();
-    const lines = [
-      `t=${t.toFixed(2)}s`,
-      `A: time=${(pred.accident_time ?? 0).toFixed ? pred.accident_time.toFixed(2) : pred.accident_time}, type=${pred.type ?? "-"}`,
-      `B: time=${(predB.accident_time ?? 0).toFixed ? predB.accident_time.toFixed(2) : predB.accident_time}, type=${predB.type ?? "-"}`,
-      `C: time=${(predC.accident_time ?? 0).toFixed ? predC.accident_time.toFixed(2) : predC.accident_time}, type=${predC.type ?? "-"}`,
-      `GT: time=${(renderGt.accident_time ?? 0).toFixed ? renderGt.accident_time.toFixed(2) : renderGt.accident_time}, type=${renderGt.type ?? "-"}`,
-    ];
+    const lines = [];
+    if (showAEl.checked) {
+      lines.push(`A: time=${(pred.accident_time ?? 0).toFixed ? pred.accident_time.toFixed(2) : pred.accident_time}, type=${pred.type ?? "-"}`);
+    }
+    if (showBEl.checked) {
+      lines.push(`B: time=${(predB.accident_time ?? 0).toFixed ? predB.accident_time.toFixed(2) : predB.accident_time}, type=${predB.type ?? "-"}`);
+    }
+    if (showCEl.checked) {
+      lines.push(`C: time=${(predC.accident_time ?? 0).toFixed ? predC.accident_time.toFixed(2) : predC.accident_time}, type=${predC.type ?? "-"}`);
+    }
+    if (showGtEl.checked) {
+      lines.push(`GT: time=${(renderGt.accident_time ?? 0).toFixed ? renderGt.accident_time.toFixed(2) : renderGt.accident_time}, type=${renderGt.type ?? "-"}`);
+    }
     updateVideoHud(lines.join("\n"));
 
-    if (pred.accident_time != null && Math.abs(t - pred.accident_time) < 0.2) {
+    if (showAEl.checked && pred.accident_time != null && Math.abs(t - pred.accident_time) < 0.2) {
       ctx.strokeStyle = "#facc15";
       ctx.lineWidth = 6;
       ctx.strokeRect(3, 3, canvas.width - 6, canvas.height - 6);
     }
-    if (renderGt.accident_time != null && Math.abs(t - renderGt.accident_time) < 0.2) {
+    if (showGtEl.checked && renderGt.accident_time != null && Math.abs(t - renderGt.accident_time) < 0.2) {
       ctx.strokeStyle = "#22c55e";
       ctx.lineWidth = 3;
       ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);

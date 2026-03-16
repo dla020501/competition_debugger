@@ -147,6 +147,27 @@
       border-color: transparent;
       box-shadow: 0 4px 12px rgba(15, 118, 110, 0.22);
     }
+    .overlay-toggle-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+    }
+    .overlay-toggle {
+      display: inline-flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 4px;
+      white-space: nowrap;
+      color: var(--muted);
+    }
+    .overlay-toggle input {
+      width: 14px;
+      height: 14px;
+      padding: 0;
+      margin: 0;
+    }
     @media (max-width: 980px) {
       .grid { grid-template-columns: 1fr; }
       #gt-panel { position: static; }
@@ -179,10 +200,12 @@
         <input id="zoom-mode" type="checkbox" style="display:none;" />
         <button id="toggle-zoom-mode" class="ghost" type="button">영역 확대 선택: OFF</button>
         <button id="reset-zoom" class="ghost" type="button">확대 해제</button>
-        <label><input id="show-a" type="checkbox" checked /> A</label>
-        <label><input id="show-b" type="checkbox" checked /> B</label>
-        <label><input id="show-c" type="checkbox" checked /> C</label>
-        <label><input id="show-gt" type="checkbox" checked /> GT</label>
+        <div class="overlay-toggle-group" role="group" aria-label="오버레이 표시">
+          <label class="overlay-toggle"><input id="show-a" type="checkbox" checked /> A</label>
+          <label class="overlay-toggle"><input id="show-b" type="checkbox" checked /> B</label>
+          <label class="overlay-toggle"><input id="show-c" type="checkbox" checked /> C</label>
+          <label class="overlay-toggle"><input id="show-gt" type="checkbox" checked /> GT</label>
+        </div>
         <span class="small" id="cursor-pos">오버레이 보기 모드</span>
       </div>
       <div class="row" style="margin-top:4px; gap:6px;">
