@@ -328,7 +328,7 @@
               <div class="small" style="margin-top:4px;">{{ r.dataset_latest_comment }}</div>
             {% endif %}
           </td>
-          <td><a class="link-btn" href="/video?source={{ source }}&submission={{ submission }}&video_path={{ r.path|urlencode }}">열기</a></td>
+          <td><a class="link-btn" href="/video?source={{ source }}&submission={{ submission|urlencode }}&video_path={{ r.path|urlencode }}">열기</a></td>
         </tr>
       {% endfor %}
       </tbody>
