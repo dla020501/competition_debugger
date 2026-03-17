@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -71,6 +71,20 @@ DATASET_TAG_LABELS = {item["value"]: item["label"] for item in TEST_DATASET_TAG_
 app = FastAPI(title="Submission Debugger", version="0.1.0")
 app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
+
+
+@app.middleware("http")
+async def normalize_redundant_slashes(request: Request, call_next):
+    # Some clients/extensions may request paths like //video?...; normalize to /video?... .
+    path = request.url.path
+    if "//" in path:
+        normalized = re.sub(r"/{2,}", "/", path)
+        if not normalized.startswith("/"):
+            normalized = f"/{normalized}"
+        query = request.url.query
+        target = f"{normalized}?{query}" if query else normalized
+        return RedirectResponse(url=target, status_code=307)
+    return await call_next(request)
 
 
 def utc_now_iso() -> str:
@@ -1785,6 +1799,37 @@ def submission_page(
     user = get_current_user(request)
     if user is None:
         return RedirectResponse(url="/login?next_url=/", status_code=303)
+
+    raw_submissions = request.query_params.getlist("submission")
+    requested_video_path = str(request.query_params.get("video_path", "")).strip()
+    if requested_video_path:
+        candidate_submission: str | None = None
+        for s in reversed(raw_submissions):
+            s_norm = str(s).strip()
+            if not s_norm:
+                continue
+            try:
+                kind, owner, _ = parse_submission_ref(s_norm)
+            except HTTPException:
+                continue
+            if kind == "personal" and owner == user:
+                candidate_submission = s_norm
+                break
+
+        if candidate_submission is None:
+            raise HTTPException(status_code=400, detail="Invalid submission query")
+
+        source_q = str(request.query_params.get("source", source)).strip()
+        source_eff_q = source_q if source_q in DATA_SOURCES else "test"
+        target = (
+            f"/video?source={quote(source_eff_q, safe='')}&"
+            f"submission={quote(candidate_submission, safe='')}&"
+            f"video_path={quote(requested_video_path, safe='')}"
+        )
+        return RedirectResponse(url=target, status_code=307)
+
+    if "/video?" in submission or submission.startswith("//"):
+        raise HTTPException(status_code=400, detail="Malformed submission parameter")
 
     personal_entries = list_personal_submission_entries(user)
     personal_submissions = [x["submission"] for x in personal_entries]
