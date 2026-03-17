@@ -435,6 +435,21 @@ def normalize_submission_kind(kind: str | None) -> str:
     return "test"
 
 
+def get_submission_kind_for_user(username: str, submission_name: str) -> str:
+    kind, owner, _ = parse_submission_ref(submission_name)
+    if kind == "shared":
+        return "test"
+    if owner is None:
+        return "test"
+
+    if is_admin(username):
+        meta = get_all_user_submission_meta_map().get(submission_name, {})
+        return normalize_submission_kind(meta.get("kind"))
+
+    meta = get_user_submission_meta_map(owner).get(submission_name, {})
+    return normalize_submission_kind(meta.get("kind"))
+
+
 def normalize_tags(raw: str | None) -> list[str]:
     if not raw:
         return []
@@ -1974,12 +1989,15 @@ def video_page(
     if user is None:
         return RedirectResponse(url="/login?next_url=/", status_code=303)
 
-    source_eff = source if source in DATA_SOURCES else "test"
     submissions = get_allowed_submissions(user)
     if submission not in submissions:
         raise HTTPException(status_code=403, detail="Submission access denied")
 
-    sub_map = read_submission_map(submission, request_user=user) if source_eff == "test" else {}
+    # Source is derived from the selected submission kind to avoid query-param drift.
+    source_eff = get_submission_kind_for_user(user, submission)
+
+    # Train videos must still show model predictions from uploaded CSV.
+    sub_map = read_submission_map(submission, request_user=user)
     metadata_rows = {r["path"]: r for r in load_metadata(source_eff)}
     if video_path not in metadata_rows:
         raise HTTPException(status_code=404, detail="Video not found in metadata")
@@ -1999,13 +2017,17 @@ def video_page(
     }
     pred = sub_map.get(video_path)
     compare = compare_submission if compare_submission in submissions and compare_submission != submission else None
+    if compare and get_submission_kind_for_user(user, compare) != source_eff:
+        compare = None
     compare2 = (
         compare_submission2
         if compare_submission2 in submissions and compare_submission2 not in {submission, compare}
         else None
     )
-    pred_b = read_submission_map(compare, request_user=user).get(video_path) if (compare and source_eff == "test") else None
-    pred_c = read_submission_map(compare2, request_user=user).get(video_path) if (compare2 and source_eff == "test") else None
+    if compare2 and get_submission_kind_for_user(user, compare2) != source_eff:
+        compare2 = None
+    pred_b = read_submission_map(compare, request_user=user).get(video_path) if compare else None
+    pred_c = read_submission_map(compare2, request_user=user).get(video_path) if compare2 else None
     history = get_history(video_path) if source_eff == "test" else []
     my_submission_comment = get_submission_comment(user, submission)
     my_video_comment = get_submission_video_comment_map(user, submission).get(video_path, "")
