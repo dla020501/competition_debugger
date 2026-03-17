@@ -234,6 +234,25 @@
     </div>
 
     <div class="card" style="margin-top:8px; background:#fff;">
+      <div class="row" style="justify-content: space-between; margin-bottom:6px;">
+        <div><strong>GT 기준 Error 요약</strong></div>
+      </div>
+      <div class="row" style="gap:10px;">
+        <span class="pill">평균 Time Error: {% if error_metrics.time_avg is not none %}{{ '%.3f'|format(error_metrics.time_avg) }}s{% else %}-{% endif %}</span>
+        <span class="pill">평균 위치 Error: {% if error_metrics.loc_avg is not none %}{{ '%.5f'|format(error_metrics.loc_avg) }}{% else %}-{% endif %}</span>
+        <span class="pill">Type 정확도: {% if error_metrics.type_accuracy is not none %}{{ '%.1f'|format(error_metrics.type_accuracy * 100) }}%{% else %}-{% endif %}</span>
+      </div>
+      <div class="small" style="margin-top:6px;">
+        Time 계산 샘플: {{ error_metrics.time_count }}개,
+        위치 계산 샘플: {{ error_metrics.loc_count }}개,
+        Type 정답: {{ error_metrics.type_match }} / {{ error_metrics.type_total }}
+        {% if error_metrics.type_error_rate is not none %}
+        (Error {{ '%.1f'|format(error_metrics.type_error_rate * 100) }}%)
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:8px; background:#fff;">
       <div class="row" style="justify-content: space-between;">
         <strong>Submission 코멘트 (모델 관점)</strong>
         <span class="small">목록에서는 모아보기만 제공, 작성은 비디오 열기 화면에서</span>

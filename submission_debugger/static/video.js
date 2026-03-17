@@ -8,8 +8,6 @@
   const ctx = canvas.getContext("2d");
 
   const pred = payload.pred || {};
-  const predB = payload.pred_b || {};
-  const predC = payload.pred_c || {};
   let gt = payload.gt || {};
   let draftGt = { ...gt };
 
@@ -27,10 +25,7 @@
   const metaText = document.getElementById("meta-text");
   const cursorPos = document.getElementById("cursor-pos");
   const historyBody = document.getElementById("history-body");
-  const showAEl = document.getElementById("show-a");
-  const showBEl = document.getElementById("show-b");
-  const showCEl = document.getElementById("show-c");
-  const showGtEl = document.getElementById("show-gt");
+  const eventMarkerRailEl = document.getElementById("event-marker-rail");
   const gtPanelEl = document.getElementById("gt-panel");
   const gtPanelTitleEl = document.getElementById("gt-panel-title");
   const gtEditFieldsEl = document.getElementById("gt-edit-fields");
@@ -105,6 +100,45 @@
       return;
     }
     applyPlaybackRate(saved, { persist: false });
+  }
+
+  function buildEventMarkers() {
+    if (!eventMarkerRailEl) {
+      return;
+    }
+    eventMarkerRailEl.innerHTML = "";
+
+    const duration = Number.isFinite(video.duration) ? video.duration : null;
+    if (!duration || duration <= 0) {
+      eventMarkerRailEl.innerHTML = '<div class="event-marker-empty">메타데이터 로딩 후 Pred/GT 시점이 표시됩니다.</div>';
+      return;
+    }
+
+    const validMarkers = [
+      { key: "pred", label: "Pred", cssClass: "pred", time: pred.accident_time },
+      { key: "gt", label: "GT", cssClass: "gt", time: gt.accident_time },
+    ]
+      .map((m) => ({ ...m, t: num(m.time, null) }))
+      .filter((m) => m.t != null);
+
+    if (!validMarkers.length) {
+      eventMarkerRailEl.innerHTML = '<div class="event-marker-empty">표시할 Pred/GT 시점이 없습니다.</div>';
+      return;
+    }
+
+    validMarkers.forEach((m) => {
+      const ratio = clamp((m.t || 0) / duration, 0, 1);
+      const marker = document.createElement("button");
+      marker.type = "button";
+      marker.className = `event-marker-item ${m.cssClass}`;
+      marker.style.left = `${(ratio * 100).toFixed(2)}%`;
+      marker.innerHTML = `<span class="event-marker-stick"></span><span class="event-marker-label">${m.label} ${Number(m.t).toFixed(2)}s</span>`;
+      marker.title = `${m.label} 시점으로 이동 (${Number(m.t).toFixed(2)}s)`;
+      marker.addEventListener("click", () => {
+        video.currentTime = Math.max(0, Math.min(duration, Number(m.t)));
+      });
+      eventMarkerRailEl.appendChild(marker);
+    });
   }
 
   function syncFormFromGt() {
@@ -252,9 +286,6 @@
     }
     canvas.style.pointerEvents = (enabled || zoomSelecting) ? "auto" : "none";
     canvas.style.cursor = (enabled || zoomSelecting) ? "crosshair" : "default";
-    if (enabled && showGtEl) {
-      showGtEl.checked = true;
-    }
     if (toggleEditModeBtn) {
       toggleEditModeBtn.textContent = enabled ? "편집 모드: ON" : "편집 모드: OFF";
       toggleEditModeBtn.disabled = !serverCanEdit;
@@ -290,7 +321,7 @@
       } else if (enabled) {
         cursorPos.textContent = "편집 모드: 마우스를 움직이면 GT 마커가 따라오고, 드래그하면 위치를 반영합니다.";
       } else {
-        cursorPos.textContent = "오버레이 보기 모드";
+        cursorPos.textContent = "오버레이 보기 모드 (Pred/GT)";
       }
     }
     if (saveState) {
@@ -373,27 +404,18 @@
   function drawInfo() {
     const t = video.currentTime || 0;
     const renderGt = getRenderGt();
-    const lines = [];
-    if (showAEl.checked) {
-      lines.push(`A: time=${(pred.accident_time ?? 0).toFixed ? pred.accident_time.toFixed(2) : pred.accident_time}, type=${pred.type ?? "-"}`);
-    }
-    if (showBEl.checked) {
-      lines.push(`B: time=${(predB.accident_time ?? 0).toFixed ? predB.accident_time.toFixed(2) : predB.accident_time}, type=${predB.type ?? "-"}`);
-    }
-    if (showCEl.checked) {
-      lines.push(`C: time=${(predC.accident_time ?? 0).toFixed ? predC.accident_time.toFixed(2) : predC.accident_time}, type=${predC.type ?? "-"}`);
-    }
-    if (showGtEl.checked) {
-      lines.push(`GT: time=${(renderGt.accident_time ?? 0).toFixed ? renderGt.accident_time.toFixed(2) : renderGt.accident_time}, type=${renderGt.type ?? "-"}`);
-    }
+    const lines = [
+      `Pred: time=${(pred.accident_time ?? 0).toFixed ? pred.accident_time.toFixed(2) : pred.accident_time}, type=${pred.type ?? "-"}`,
+      `GT: time=${(renderGt.accident_time ?? 0).toFixed ? renderGt.accident_time.toFixed(2) : renderGt.accident_time}, type=${renderGt.type ?? "-"}`,
+    ];
     updateVideoHud(lines.join("\n"));
 
-    if (showAEl.checked && pred.accident_time != null && Math.abs(t - pred.accident_time) < 0.2) {
+    if (pred.accident_time != null && Math.abs(t - pred.accident_time) < 0.2) {
       ctx.strokeStyle = "#facc15";
       ctx.lineWidth = 6;
       ctx.strokeRect(3, 3, canvas.width - 6, canvas.height - 6);
     }
-    if (showGtEl.checked && renderGt.accident_time != null && Math.abs(t - renderGt.accident_time) < 0.2) {
+    if (renderGt.accident_time != null && Math.abs(t - renderGt.accident_time) < 0.2) {
       ctx.strokeStyle = "#22c55e";
       ctx.lineWidth = 3;
       ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
@@ -440,10 +462,8 @@
 
   function renderHUDText() {
     const renderGt = getRenderGt();
-    const lineA = `A: t=${pred.accident_time ?? "-"}, x=${pred.center_x ?? "-"}, y=${pred.center_y ?? "-"}, type=${pred.type ?? "-"}`;
-    const lineB = `B: t=${predB.accident_time ?? "-"}, x=${predB.center_x ?? "-"}, y=${predB.center_y ?? "-"}, type=${predB.type ?? "-"}`;
-    const lineC = `C: t=${predC.accident_time ?? "-"}, x=${predC.center_x ?? "-"}, y=${predC.center_y ?? "-"}, type=${predC.type ?? "-"}`;
-    predText.textContent = `${lineA}\n${lineB}\n${lineC}`;
+    const lineA = `Pred: t=${pred.accident_time ?? "-"}, x=${pred.center_x ?? "-"}, y=${pred.center_y ?? "-"}, type=${pred.type ?? "-"}`;
+    predText.textContent = lineA;
     gtText.textContent = `GT: t=${renderGt.accident_time ?? "-"}, x=${renderGt.center_x ?? "-"}, y=${renderGt.center_y ?? "-"}, type=${renderGt.type ?? "-"}, by=${gt.updated_by ?? "-"}`;
     const m = payload.meta || {};
     metaText.textContent = `duration=${m.duration ?? "-"}s, quality=${m.quality ?? "-"}, weather=${m.weather ?? "-"}, day_time=${m.day_time ?? "-"}, scene=${m.scene_layout ?? "-"}`;
@@ -529,22 +549,12 @@
     }
     resizeCanvas();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (showAEl.checked) {
-      drawMarker(pred.center_x, pred.center_y, "#ef4444", "A");
-    }
-    if (showBEl.checked) {
-      drawMarker(predB.center_x, predB.center_y, "#3b82f6", "B");
-    }
-    if (showCEl.checked) {
-      drawMarker(predC.center_x, predC.center_y, "#eab308", "C");
-    }
-    if (showGtEl.checked) {
-      if (isEditEnabled() && hoverPoint && !isDraggingGt) {
-        drawMarker(hoverPoint.x, hoverPoint.y, "#22c55e", "GT");
-      } else {
-        const renderGt = getRenderGt();
-        drawMarker(renderGt.center_x, renderGt.center_y, "#22c55e", "GT");
-      }
+    drawMarker(pred.center_x, pred.center_y, "#ef4444", "Pred");
+    if (isEditEnabled() && hoverPoint && !isDraggingGt) {
+      drawMarker(hoverPoint.x, hoverPoint.y, "#22c55e", "GT");
+    } else {
+      const renderGt = getRenderGt();
+      drawMarker(renderGt.center_x, renderGt.center_y, "#22c55e", "GT");
     }
     drawZoomGuide();
     drawEditGuide();
@@ -594,9 +604,6 @@
       return;
     }
     if (!isEditEnabled()) {
-      return;
-    }
-    if (!showGtEl.checked) {
       return;
     }
     isDraggingGt = true;
@@ -752,6 +759,7 @@
   video.addEventListener("loadeddata", () => {
     applyPlaybackRate(localStorage.getItem(PLAYBACK_RATE_STORAGE_KEY) || "1", { persist: false });
     showVideoSuccess("비디오 로드 완료");
+    buildEventMarkers();
     if (loadTimeoutId) {
       clearTimeout(loadTimeoutId);
       loadTimeoutId = null;
@@ -780,18 +788,6 @@
     const renderGt = getRenderGt();
     if (renderGt.accident_time != null) {
       video.currentTime = Math.max(0, Number(renderGt.accident_time));
-    }
-  });
-
-  document.getElementById("seek-pred-b").addEventListener("click", () => {
-    if (predB.accident_time != null) {
-      video.currentTime = Math.max(0, Number(predB.accident_time));
-    }
-  });
-
-  document.getElementById("seek-pred-c").addEventListener("click", () => {
-    if (predC.accident_time != null) {
-      video.currentTime = Math.max(0, Number(predC.accident_time));
     }
   });
 
@@ -858,6 +854,7 @@
     applyEditModeUI();
     syncFormFromGt();
     renderHUDText();
+    buildEventMarkers();
     refreshHistory();
     saveMsg.textContent = "저장 완료: GT 오버레이와 우측 값이 즉시 반영되었습니다.";
     if (saveState) {
@@ -884,6 +881,7 @@
   applyEditModeUI();
   renderHUDText();
   video.addEventListener("loadedmetadata", resizeCanvas);
+  video.addEventListener("loadedmetadata", buildEventMarkers);
   window.addEventListener("resize", resizeCanvas);
   if (video.currentSrc || video.src) {
     video.setAttribute("data-base-src", video.currentSrc || video.src);

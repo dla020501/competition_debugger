@@ -249,6 +249,45 @@
           <div class="small">아직 GT 편집 이력이 없습니다.</div>
         {% endif %}
       </div>
+
+      <div style="margin-top:10px; border-top:1px solid var(--line); padding-top:10px;">
+        <div class="row" style="justify-content: space-between;">
+          <strong>Submission Error TOP 3</strong>
+          <span class="small">총 Error = Time + 위치 + Type Error</span>
+        </div>
+
+        <div class="small" style="margin-top:6px;"><strong>TEST</strong></div>
+        {% if submission_error_leaderboard.test %}
+          {% for item in submission_error_leaderboard.test %}
+          <div class="contrib-item" style="margin-top:6px;">
+            <span class="rank">{{ item.rank }}</span>
+            <strong>{{ item.filename }}</strong>
+            <span class="small">owner: {{ item.owner }}</span>
+            <span class="small">Time Error: {% if item.time_avg is not none %}{{ '%.3f'|format(item.time_avg) }}s{% else %}-{% endif %}</span>
+            <span class="small">위치 Error: {% if item.loc_avg is not none %}{{ '%.5f'|format(item.loc_avg) }}{% else %}-{% endif %}</span>
+            <span class="small">Type 정확도: {% if item.type_accuracy is not none %}{{ '%.1f'|format(item.type_accuracy * 100) }}%{% else %}-{% endif %} ({{ item.type_match }}/{{ item.type_total }})</span>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="small">표시 가능한 test submission이 없습니다.</div>
+        {% endif %}
+
+        <div class="small" style="margin-top:10px;"><strong>TRAIN</strong></div>
+        {% if submission_error_leaderboard.train %}
+          {% for item in submission_error_leaderboard.train %}
+          <div class="contrib-item" style="margin-top:6px;">
+            <span class="rank">{{ item.rank }}</span>
+            <strong>{{ item.filename }}</strong>
+            <span class="small">owner: {{ item.owner }}</span>
+            <span class="small">Time Error: {% if item.time_avg is not none %}{{ '%.3f'|format(item.time_avg) }}s{% else %}-{% endif %}</span>
+            <span class="small">위치 Error: {% if item.loc_avg is not none %}{{ '%.5f'|format(item.loc_avg) }}{% else %}-{% endif %}</span>
+            <span class="small">Type 정확도: {% if item.type_accuracy is not none %}{{ '%.1f'|format(item.type_accuracy * 100) }}%{% else %}-{% endif %} ({{ item.type_match }}/{{ item.type_total }})</span>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="small">표시 가능한 train submission이 없습니다.</div>
+        {% endif %}
+      </div>
     </div>
 
     <div class="card">
@@ -323,7 +362,7 @@
 
   <div class="card" style="margin-top:12px;">
     <div class="row" style="justify-content: space-between;">
-      <strong>전체 CSV 업로드 목록 (현재 파일 기준)</strong>
+      <strong>전체 CSV 업로드 목록</strong>
       <span class="small">삭제된 파일은 목록에 보이지 않습니다.</span>
     </div>
     <div class="csv-table-wrap">
