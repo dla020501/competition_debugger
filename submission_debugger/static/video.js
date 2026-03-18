@@ -52,6 +52,7 @@
   let zoomRect = null;
   let zoomTransform = { scale: 1, tx: 0, ty: 0 };
   let lastVideoHudText = "";
+  let suppressOverlayForFullscreen = false;
   const serverCanEdit = !saveMsg || !document.getElementById("save-gt")?.disabled;
   const MIN_ZOOM_RECT_SIZE = 0.05;
   const ZOOM_PADDING_FACTOR = 1.15;
@@ -65,6 +66,11 @@
 
   function clamp(v, min, max) {
     return Math.max(min, Math.min(max, v));
+  }
+
+  function formatOverlayTime(value) {
+    const parsed = num(value);
+    return parsed == null ? "-" : parsed.toFixed(2);
   }
 
   function formatPlaybackRate(rate) {
@@ -100,6 +106,39 @@
       return;
     }
     applyPlaybackRate(saved, { persist: false });
+  }
+
+  function isNativeFullscreenActive() {
+    const fullscreenElement =
+      document.fullscreenElement ||
+      document.webkitFullscreenElement ||
+      document.mozFullScreenElement ||
+      document.msFullscreenElement ||
+      null;
+    return fullscreenElement === video || fullscreenElement === videoWrap || !!video.webkitDisplayingFullscreen;
+  }
+
+  function syncOverlayFullscreenState() {
+    const nextSuppressed = isNativeFullscreenActive();
+    if (suppressOverlayForFullscreen === nextSuppressed) {
+      return;
+    }
+    suppressOverlayForFullscreen = nextSuppressed;
+    canvas.style.visibility = suppressOverlayForFullscreen ? "hidden" : "visible";
+    if (videoHudEl) {
+      videoHudEl.style.visibility = suppressOverlayForFullscreen ? "hidden" : "visible";
+    }
+    if (zoomSelectionBoxEl) {
+      zoomSelectionBoxEl.style.visibility = suppressOverlayForFullscreen ? "hidden" : "visible";
+    }
+    if (!suppressOverlayForFullscreen) {
+      hoverPoint = null;
+      resizeCanvas();
+      applyZoomTransform();
+      renderHUDText();
+    } else {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
   }
 
   function buildEventMarkers() {
@@ -405,17 +444,17 @@
     const t = video.currentTime || 0;
     const renderGt = getRenderGt();
     const lines = [
-      `Pred: time=${(pred.accident_time ?? 0).toFixed ? pred.accident_time.toFixed(2) : pred.accident_time}, type=${pred.type ?? "-"}`,
-      `GT: time=${(renderGt.accident_time ?? 0).toFixed ? renderGt.accident_time.toFixed(2) : renderGt.accident_time}, type=${renderGt.type ?? "-"}`,
+      `Pred: time=${formatOverlayTime(pred.accident_time)}, type=${pred.type ?? "-"}`,
+      `GT: time=${formatOverlayTime(renderGt.accident_time)}, type=${renderGt.type ?? "-"}`,
     ];
     updateVideoHud(lines.join("\n"));
 
-    if (showAEl.checked && pred.accident_time != null && Math.abs(t - pred.accident_time) < 0.2) {
+    if (pred.accident_time != null && Math.abs(t - pred.accident_time) < 0.2) {
       ctx.strokeStyle = "#facc15";
       ctx.lineWidth = 6;
       ctx.strokeRect(3, 3, canvas.width - 6, canvas.height - 6);
     }
-    if (showGtEl.checked && renderGt.accident_time != null && Math.abs(t - renderGt.accident_time) < 0.2) {
+    if (renderGt.accident_time != null && Math.abs(t - renderGt.accident_time) < 0.2) {
       ctx.strokeStyle = "#22c55e";
       ctx.lineWidth = 3;
       ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
@@ -548,6 +587,11 @@
       return;
     }
     resizeCanvas();
+    if (suppressOverlayForFullscreen) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      requestAnimationFrame(draw);
+      return;
+    }
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     drawMarker(pred.center_x, pred.center_y, "#ef4444", "Pred");
     if (isEditEnabled() && hoverPoint && !isDraggingGt) {
@@ -883,6 +927,11 @@
   video.addEventListener("loadedmetadata", resizeCanvas);
   video.addEventListener("loadedmetadata", buildEventMarkers);
   window.addEventListener("resize", resizeCanvas);
+  ["fullscreenchange", "webkitfullscreenchange", "mozfullscreenchange", "MSFullscreenChange"].forEach((eventName) => {
+    document.addEventListener(eventName, syncOverlayFullscreenState);
+  });
+  video.addEventListener("webkitbeginfullscreen", syncOverlayFullscreenState);
+  video.addEventListener("webkitendfullscreen", syncOverlayFullscreenState);
   if (video.currentSrc || video.src) {
     video.setAttribute("data-base-src", video.currentSrc || video.src);
   }
