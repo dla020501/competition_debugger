@@ -49,6 +49,8 @@
   let loadTimeoutId = null;
   let zoomSelectionStart = null;
   let zoomPreviewRect = null;
+  let gtSelectionStart = null;
+  let gtPreviewRect = null;
   let zoomRect = null;
   let zoomTransform = { scale: 1, tx: 0, ty: 0 };
   let lastVideoHudText = "";
@@ -270,6 +272,11 @@
     syncZoomSelectionBox();
   }
 
+  function clearGtPreview() {
+    gtSelectionStart = null;
+    gtPreviewRect = null;
+  }
+
   function resetZoom() {
     setZoomRect(null);
     clearZoomPreview();
@@ -358,7 +365,7 @@
       if (zoomSelecting) {
         cursorPos.textContent = "확대할 영역을 드래그해서 지정하세요.";
       } else if (enabled) {
-        cursorPos.textContent = "편집 모드: 마우스를 움직이면 GT 마커가 따라오고, 드래그하면 위치를 반영합니다.";
+        cursorPos.textContent = "편집 모드: GT 박스를 드래그해서 그리면 중심 좌표가 자동 반영됩니다.";
       } else {
         cursorPos.textContent = "오버레이 보기 모드 (Pred/GT)";
       }
@@ -380,6 +387,9 @@
       } else {
         zoomStateEl.textContent = "전체 화면";
       }
+    }
+    if (!enabled) {
+      clearGtPreview();
     }
     hoverPoint = null;
   }
@@ -466,10 +476,10 @@
       return;
     }
     ctx.fillStyle = "rgba(15, 23, 42, 0.35)";
-    ctx.fillRect(10, canvas.height - 40, 220, 28);
+    ctx.fillRect(10, canvas.height - 40, 252, 28);
     ctx.fillStyle = "#f8fafc";
     ctx.font = "12px sans-serif";
-    ctx.fillText("드래그하여 GT 위치 지정", 18, canvas.height - 22);
+    ctx.fillText("드래그하여 GT 박스 지정", 18, canvas.height - 22);
   }
 
   function drawZoomGuide() {
@@ -496,6 +506,28 @@
     ctx.fillStyle = "#ecfeff";
     ctx.font = "bold 11px sans-serif";
     ctx.fillText("ZOOM", x + 8, Math.max(12, y - 11));
+    ctx.restore();
+  }
+
+  function drawGtSelectionGuide() {
+    const rect = gtPreviewRect;
+    if (!isEditEnabled() || !isDraggingGt || !rect || rect.w <= 0 || rect.h <= 0) {
+      return;
+    }
+
+    const x = rect.x * canvas.width;
+    const y = rect.y * canvas.height;
+    const w = rect.w * canvas.width;
+    const h = rect.h * canvas.height;
+
+    ctx.save();
+    ctx.strokeStyle = "#22c55e";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 6]);
+    ctx.strokeRect(x, y, w, h);
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(21, 128, 61, 0.18)";
+    ctx.fillRect(x, y, w, h);
     ctx.restore();
   }
 
@@ -594,12 +626,9 @@
     }
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     drawMarker(pred.center_x, pred.center_y, "#ef4444", "Pred");
-    if (isEditEnabled() && hoverPoint && !isDraggingGt) {
-      drawMarker(hoverPoint.x, hoverPoint.y, "#22c55e", "GT");
-    } else {
-      const renderGt = getRenderGt();
-      drawMarker(renderGt.center_x, renderGt.center_y, "#22c55e", "GT");
-    }
+    const renderGt = getRenderGt();
+    drawMarker(renderGt.center_x, renderGt.center_y, "#22c55e", "GT");
+    drawGtSelectionGuide();
     drawZoomGuide();
     drawEditGuide();
     drawInfo();
@@ -623,17 +652,34 @@
     }
   }
 
-  canvas.addEventListener("click", (e) => {
+  function updateDraftPointFromRect(rect) {
+    if (!rect) {
+      return;
+    }
+    const x = clamp(rect.x + rect.w / 2, 0, 1);
+    const y = clamp(rect.y + rect.h / 2, 0, 1);
+    cxEl.value = x.toFixed(4);
+    cyEl.value = y.toFixed(4);
+    syncDraftFromForm();
+    renderHUDText();
+    if (cursorPos) {
+      cursorPos.textContent = `선택 박스 중심: x=${x.toFixed(4)}, y=${y.toFixed(4)} / w=${rect.w.toFixed(4)}, h=${rect.h.toFixed(4)}`;
+    }
+    if (saveState) {
+      saveState.textContent = "미저장 변경 있음";
+    }
+  }
+
+  canvas.addEventListener("click", () => {
     if (isZoomSelectEnabled()) {
       return;
     }
     if (!isEditEnabled()) {
       return;
     }
-    if (isDraggingGt) {
-      return;
+    if (cursorPos) {
+      cursorPos.textContent = "편집 모드: 클릭 대신 드래그로 GT 박스를 지정하세요.";
     }
-    updateDraftPointFromEvent(e);
   });
 
   canvas.addEventListener("mousedown", (e) => {
@@ -652,7 +698,12 @@
     }
     isDraggingGt = true;
     hoverPoint = null;
-    updateDraftPointFromEvent(e);
+    gtSelectionStart = pointFromEvent(e);
+    gtPreviewRect = { x: gtSelectionStart.x, y: gtSelectionStart.y, w: 0, h: 0 };
+    updateDraftPointFromRect(gtPreviewRect);
+    if (cursorPos) {
+      cursorPos.textContent = `GT 박스 시작 좌표: x=${gtSelectionStart.x.toFixed(4)}, y=${gtSelectionStart.y.toFixed(4)}`;
+    }
   });
 
   canvas.addEventListener("mousemove", (e) => {
@@ -672,13 +723,13 @@
     if (!isEditEnabled()) {
       return;
     }
-    if (isDraggingGt) {
-      updateDraftPointFromEvent(e);
+    if (isDraggingGt && gtSelectionStart) {
+      gtPreviewRect = rectFromPoints(gtSelectionStart, pointFromEvent(e));
+      updateDraftPointFromRect(gtPreviewRect);
       return;
     }
-    hoverPoint = pointFromEvent(e);
     if (cursorPos) {
-      cursorPos.textContent = `미리보기 좌표: x=${hoverPoint.x.toFixed(4)}, y=${hoverPoint.y.toFixed(4)} (드래그하면 반영)`;
+      cursorPos.textContent = "편집 모드: 드래그해서 GT 박스를 그리세요.";
     }
   });
 
@@ -700,17 +751,22 @@
       applyEditModeUI();
       return;
     }
-    if (isDraggingGt && saveMsg) {
-      saveMsg.textContent = "드래그 완료. 저장 버튼을 누르면 서버에 반영됩니다.";
+    if (isDraggingGt) {
+      if (gtPreviewRect) {
+        updateDraftPointFromRect(gtPreviewRect);
+      }
+      if (saveMsg) {
+        saveMsg.textContent = "박스 선택 완료. 중심 좌표가 반영되었습니다. 저장 버튼을 누르면 서버에 반영됩니다.";
+      }
+      clearGtPreview();
     }
     isDraggingGt = false;
   });
 
   canvas.addEventListener("mouseleave", () => {
-    if (!isDraggingZoom) {
+    if (!isDraggingZoom && !isDraggingGt) {
       hoverPoint = null;
     }
-    isDraggingGt = false;
   });
 
   [tEl, cxEl, cyEl, typeEl, noteEl].forEach((el) => {
