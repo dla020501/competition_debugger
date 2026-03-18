@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -71,6 +71,20 @@ DATASET_TAG_LABELS = {item["value"]: item["label"] for item in TEST_DATASET_TAG_
 app = FastAPI(title="Submission Debugger", version="0.1.0")
 app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
+
+
+@app.middleware("http")
+async def normalize_redundant_slashes(request: Request, call_next):
+    # Some clients/extensions may request paths like //video?...; normalize to /video?... .
+    path = request.url.path
+    if "//" in path:
+        normalized = re.sub(r"/{2,}", "/", path)
+        if not normalized.startswith("/"):
+            normalized = f"/{normalized}"
+        query = request.url.query
+        target = f"{normalized}?{query}" if query else normalized
+        return RedirectResponse(url=target, status_code=307)
+    return await call_next(request)
 
 
 def utc_now_iso() -> str:
@@ -419,6 +433,21 @@ def normalize_submission_kind(kind: str | None) -> str:
     if v in {"train", "sim", "sim_dataset"}:
         return "train"
     return "test"
+
+
+def get_submission_kind_for_user(username: str, submission_name: str) -> str:
+    kind, owner, _ = parse_submission_ref(submission_name)
+    if kind == "shared":
+        return "test"
+    if owner is None:
+        return "test"
+
+    if is_admin(username):
+        meta = get_all_user_submission_meta_map().get(submission_name, {})
+        return normalize_submission_kind(meta.get("kind"))
+
+    meta = get_user_submission_meta_map(owner).get(submission_name, {})
+    return normalize_submission_kind(meta.get("kind"))
 
 
 def normalize_tags(raw: str | None) -> list[str]:
@@ -1048,6 +1077,7 @@ def list_all_submissions() -> list[str]:
 def list_all_uploaded_csv_entries() -> list[dict[str, Any]]:
     meta_map = get_all_user_submission_meta_map()
     items: list[dict[str, Any]] = []
+    starter_demo_files = {"submission_test_demo.csv", "submission_train_demo.csv"}
 
     # Shared submissions at repo root.
     for p in list_submission_files():
@@ -1068,6 +1098,8 @@ def list_all_uploaded_csv_entries() -> list[dict[str, Any]]:
     # Personal submissions across users.
     for ref in list_all_personal_submission_refs():
         _, owner, filename = parse_submission_ref(ref)
+        if filename in starter_demo_files:
+            continue
         path = USER_SUBMISSIONS_DIR / str(owner or "") / filename
         created_at = None
         if path.exists():
@@ -1554,6 +1586,147 @@ def aggregate_submission_score(
     }
 
 
+def aggregate_submission_error_metrics(
+    sub_map: dict[str, dict[str, Any]],
+    gt_map: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    time_errors: list[float] = []
+    loc_errors: list[float] = []
+    type_total = 0
+    type_match = 0
+
+    for video_path, gt in gt_map.items():
+        pred = sub_map.get(video_path)
+        if pred is None:
+            continue
+
+        gt_t = parse_float(gt.get("accident_time"))
+        pr_t = parse_float(pred.get("accident_time"))
+        if gt_t is not None and pr_t is not None:
+            time_errors.append(abs(pr_t - gt_t))
+
+        gt_x = parse_float(gt.get("center_x"))
+        gt_y = parse_float(gt.get("center_y"))
+        pr_x = parse_float(pred.get("center_x"))
+        pr_y = parse_float(pred.get("center_y"))
+        if gt_x is not None and gt_y is not None and pr_x is not None and pr_y is not None:
+            loc_errors.append(math.sqrt((pr_x - gt_x) ** 2 + (pr_y - gt_y) ** 2))
+
+        gt_type = str(gt.get("type") or "").strip()
+        pr_type = str(pred.get("type") or "").strip()
+        if gt_type and pr_type:
+            type_total += 1
+            if gt_type == pr_type:
+                type_match += 1
+
+    time_n = len(time_errors)
+    loc_n = len(loc_errors)
+    type_accuracy = (type_match / type_total) if type_total else None
+    type_error_rate = (1.0 - type_accuracy) if type_accuracy is not None else None
+
+    return {
+        "time_avg": (sum(time_errors) / time_n) if time_n else None,
+        "time_count": time_n,
+        "loc_avg": (sum(loc_errors) / loc_n) if loc_n else None,
+        "loc_count": loc_n,
+        "type_accuracy": type_accuracy,
+        "type_error_rate": type_error_rate,
+        "type_match": type_match,
+        "type_total": type_total,
+    }
+
+
+def read_submission_map_internal(submission_name: str) -> dict[str, dict[str, Any]]:
+    kind, owner, _ = parse_submission_ref(submission_name)
+    request_user = owner if (kind == "personal" and owner) else DEFAULT_ADMIN_USER
+    return read_submission_map(submission_name, request_user=request_user)
+
+
+def get_submission_error_leaderboard(limit: int = 3) -> dict[str, list[dict[str, Any]]]:
+    limit_eff = max(1, int(limit))
+    entries = list_all_uploaded_csv_entries()
+
+    train_meta = load_metadata("train")
+    train_gt_map = {
+        m["path"]: {
+            "accident_time": m.get("gt_time"),
+            "center_x": m.get("gt_cx"),
+            "center_y": m.get("gt_cy"),
+            "type": m.get("gt_type"),
+        }
+        for m in train_meta
+    }
+
+    test_meta = load_metadata("test")
+    test_paths = {m["path"] for m in test_meta}
+    test_gt_all = get_gt_map()
+    test_gt_map = {p: g for p, g in test_gt_all.items() if p in test_paths}
+
+    leaderboard: dict[str, list[dict[str, Any]]] = {"train": [], "test": []}
+
+    for source in ("train", "test"):
+        source_gt = train_gt_map if source == "train" else test_gt_map
+        rows: list[dict[str, Any]] = []
+
+        for e in entries:
+            kind = normalize_submission_kind(str(e.get("kind") or ""))
+            if kind != source:
+                continue
+
+            submission_ref = str(e.get("submission") or "").strip()
+            if not submission_ref:
+                continue
+
+            try:
+                sub_map = read_submission_map_internal(submission_ref)
+            except Exception:
+                continue
+
+            metrics = aggregate_submission_error_metrics(sub_map, source_gt)
+            has_metrics = not (
+                int(metrics.get("time_count") or 0) == 0
+                and int(metrics.get("loc_count") or 0) == 0
+                and int(metrics.get("type_total") or 0) == 0
+            )
+
+            time_term = metrics.get("time_avg")
+            loc_term = metrics.get("loc_avg")
+            acc = metrics.get("type_accuracy")
+            total_error = (
+                (float(time_term) if time_term is not None else 999.0)
+                + (float(loc_term) if loc_term is not None else 999.0)
+                + ((1.0 - float(acc)) if acc is not None else 999.0)
+            )
+
+            rows.append(
+                {
+                    "submission": submission_ref,
+                    "filename": str(e.get("filename") or submission_ref),
+                    "owner": str(e.get("owner") or ""),
+                    "time_avg": metrics.get("time_avg"),
+                    "loc_avg": metrics.get("loc_avg"),
+                    "type_accuracy": metrics.get("type_accuracy"),
+                    "type_error_rate": metrics.get("type_error_rate"),
+                    "type_match": int(metrics.get("type_match") or 0),
+                    "type_total": int(metrics.get("type_total") or 0),
+                    "has_metrics": has_metrics,
+                    "total_error": total_error,
+                }
+            )
+
+        rows.sort(
+            key=lambda x: (
+                0 if bool(x.get("has_metrics")) else 1,
+                float(x.get("total_error") or 999999.0),
+            )
+        )
+        leaderboard[source] = [
+            {**r, "rank": i + 1} for i, r in enumerate(rows[:limit_eff])
+        ]
+
+    return leaderboard
+
+
 @app.on_event("startup")
 def startup() -> None:
     init_db()
@@ -1705,6 +1878,7 @@ def index(
         e["can_edit_note"] = bool(e.get("can_edit_note")) and (owner == user)
     personal_submissions = [x["submission"] for x in personal_entries]
     contributors_top = get_top_contributors(limit=3)
+    leaderboard = get_submission_error_leaderboard(limit=3)
 
     if not personal_submissions:
         return templates.TemplateResponse(
@@ -1715,6 +1889,7 @@ def index(
                 "is_admin": is_admin(user),
                 "personal_entries": [],
                 "contributors_top": contributors_top,
+                "submission_error_leaderboard": leaderboard,
                 "empty_personal_submissions": True,
                 "all_csv_entries": all_csv_entries,
                 "submissions": [],
@@ -1749,6 +1924,7 @@ def index(
             "user": user,
             "is_admin": is_admin(user),
             "contributors_top": contributors_top,
+            "submission_error_leaderboard": leaderboard,
             "empty_personal_submissions": False,
             "personal_entries": personal_entries,
             "all_csv_entries": all_csv_entries,
@@ -1786,6 +1962,37 @@ def submission_page(
     if user is None:
         return RedirectResponse(url="/login?next_url=/", status_code=303)
 
+    raw_submissions = request.query_params.getlist("submission")
+    requested_video_path = str(request.query_params.get("video_path", "")).strip()
+    if requested_video_path:
+        candidate_submission: str | None = None
+        for s in reversed(raw_submissions):
+            s_norm = str(s).strip()
+            if not s_norm:
+                continue
+            try:
+                kind, owner, _ = parse_submission_ref(s_norm)
+            except HTTPException:
+                continue
+            if kind == "personal" and owner == user:
+                candidate_submission = s_norm
+                break
+
+        if candidate_submission is None:
+            raise HTTPException(status_code=400, detail="Invalid submission query")
+
+        source_q = str(request.query_params.get("source", source)).strip()
+        source_eff_q = source_q if source_q in DATA_SOURCES else "test"
+        target = (
+            f"/video?source={quote(source_eff_q, safe='')}&"
+            f"submission={quote(candidate_submission, safe='')}&"
+            f"video_path={quote(requested_video_path, safe='')}"
+        )
+        return RedirectResponse(url=target, status_code=307)
+
+    if "/video?" in submission or submission.startswith("//"):
+        raise HTTPException(status_code=400, detail="Malformed submission parameter")
+
     personal_entries = list_personal_submission_entries(user)
     personal_submissions = [x["submission"] for x in personal_entries]
     if submission not in personal_submissions:
@@ -1804,6 +2011,16 @@ def submission_page(
     estimated_score = None
     estimated_used = 0
     expected_complete_count = 0
+    error_metrics = {
+        "time_avg": None,
+        "time_count": 0,
+        "loc_avg": None,
+        "loc_count": 0,
+        "type_accuracy": None,
+        "type_error_rate": None,
+        "type_match": 0,
+        "type_total": 0,
+    }
     if source_eff == "test":
         source_paths = {m["path"] for m in metadata}
         source_gt = {p: g for p, g in gt_map.items() if p in source_paths}
@@ -1811,6 +2028,18 @@ def submission_page(
         agg = aggregate_submission_score(sub_map, source_gt, sigma_t=2.0, sigma_s=0.15)
         estimated_score = agg.get("H")
         estimated_used = int(agg.get("used") or 0)
+        error_metrics = aggregate_submission_error_metrics(sub_map, source_gt)
+    else:
+        source_gt_train = {
+            m["path"]: {
+                "accident_time": m.get("gt_time"),
+                "center_x": m.get("gt_cx"),
+                "center_y": m.get("gt_cy"),
+                "type": m.get("gt_type"),
+            }
+            for m in metadata
+        }
+        error_metrics = aggregate_submission_error_metrics(sub_map, source_gt_train)
 
     quality_values = sorted({m["quality"] for m in metadata if m.get("quality")})
     weather_values = sorted({m["weather"] for m in metadata if m.get("weather")})
@@ -1912,6 +2141,7 @@ def submission_page(
             "estimated_score": estimated_score,
             "estimated_used": estimated_used,
             "expected_complete_count": expected_complete_count,
+            "error_metrics": error_metrics,
         },
     )
 
@@ -1929,12 +2159,15 @@ def video_page(
     if user is None:
         return RedirectResponse(url="/login?next_url=/", status_code=303)
 
-    source_eff = source if source in DATA_SOURCES else "test"
     submissions = get_allowed_submissions(user)
     if submission not in submissions:
         raise HTTPException(status_code=403, detail="Submission access denied")
 
-    sub_map = read_submission_map(submission, request_user=user) if source_eff == "test" else {}
+    # Source is derived from the selected submission kind to avoid query-param drift.
+    source_eff = get_submission_kind_for_user(user, submission)
+
+    # Train videos must still show model predictions from uploaded CSV.
+    sub_map = read_submission_map(submission, request_user=user)
     metadata_rows = {r["path"]: r for r in load_metadata(source_eff)}
     if video_path not in metadata_rows:
         raise HTTPException(status_code=404, detail="Video not found in metadata")
@@ -1953,14 +2186,8 @@ def video_page(
         "updated_at": None,
     }
     pred = sub_map.get(video_path)
-    compare = compare_submission if compare_submission in submissions and compare_submission != submission else None
-    compare2 = (
-        compare_submission2
-        if compare_submission2 in submissions and compare_submission2 not in {submission, compare}
-        else None
-    )
-    pred_b = read_submission_map(compare, request_user=user).get(video_path) if (compare and source_eff == "test") else None
-    pred_c = read_submission_map(compare2, request_user=user).get(video_path) if (compare2 and source_eff == "test") else None
+    compare = None
+    compare2 = None
     history = get_history(video_path) if source_eff == "test" else []
     my_submission_comment = get_submission_comment(user, submission)
     my_video_comment = get_submission_video_comment_map(user, submission).get(video_path, "")
@@ -1980,8 +2207,6 @@ def video_page(
         "compare_submission": compare,
         "compare_submission2": compare2,
         "pred": pred,
-        "pred_b": pred_b,
-        "pred_c": pred_c,
         "gt": gt,
         "meta": metadata_rows[video_path],
     }

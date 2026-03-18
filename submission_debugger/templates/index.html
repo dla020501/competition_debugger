@@ -21,6 +21,7 @@
     body {
       margin: 0;
       font-family: "IBM Plex Sans", "Noto Sans KR", sans-serif;
+      line-height: 1.42;
       color: var(--ink);
       background:
         radial-gradient(1100px 420px at 0% -12%, #fff5dd 0%, transparent 70%),
@@ -38,10 +39,17 @@
       backdrop-filter: blur(1px);
     }
     .header-grid { display: grid; grid-template-columns: 1.5fr 1fr; gap: 12px; }
-    .sub-grid { display: grid; grid-template-columns: minmax(280px, 0.8fr) minmax(560px, 1.2fr); gap: 12px; margin-top: 12px; }
+    .sub-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 0.8fr) minmax(560px, 1.2fr);
+      gap: 12px;
+      margin-top: 12px;
+      align-items: start;
+    }
     .title { margin: 0; font-size: 24px; }
     .small { color: var(--muted); font-size: 12px; }
     .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .row > * { min-width: 0; }
     .right { margin-left: auto; }
     input, select, button {
       font: inherit;
@@ -56,9 +64,15 @@
       box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.17);
     }
     button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       border: none;
       color: #fff;
       font-weight: 600;
+      line-height: 1.25;
+      white-space: normal;
+      word-break: keep-all;
       cursor: pointer;
       background: linear-gradient(180deg, var(--accent), var(--accent2));
       box-shadow: 0 4px 12px rgba(15, 118, 110, 0.3);
@@ -85,12 +99,76 @@
     .contrib-list { display: grid; grid-template-columns: 1fr; gap: 6px; margin-top: 8px; max-height: 220px; overflow: auto; }
     .contrib-item {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 8px;
+      flex-wrap: wrap;
       border: 1px solid var(--line);
       border-radius: 10px;
       padding: 7px 9px;
       background: #fff;
+    }
+    .contrib-item strong,
+    .contrib-item .small {
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .leader-item {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr);
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 9px;
+      background: #fff;
+      margin-top: 6px;
+    }
+    .leader-main {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+    }
+    .leader-file {
+      min-width: 0;
+    }
+    .leader-file strong {
+      display: block;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      line-height: 1.32;
+    }
+    .leader-owner {
+      margin-top: 2px;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .leader-metrics {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+      gap: 8px;
+    }
+    .metric-kv {
+      min-width: 0;
+      padding-left: 6px;
+      border-left: 1px solid #e8dfd1;
+    }
+    .metric-kv .label {
+      display: block;
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.2;
+    }
+    .metric-kv .value {
+      display: block;
+      margin-top: 2px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #334155;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      line-height: 1.25;
     }
     .rank {
       width: 24px;
@@ -111,48 +189,64 @@
       background: #fffaf2;
       margin-top: 10px;
     }
-    .my-list { margin-top: 8px; max-height: 280px; overflow: auto; }
+    .my-list {
+      margin-top: 10px;
+      max-height: min(52vh, 460px);
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 2px;
+    }
     .my-row {
       display: grid;
-      grid-template-columns: 1fr auto auto;
-      align-items: center;
+      grid-template-columns: 1fr;
+      align-items: start;
       gap: 8px;
       border-top: 1px solid var(--line);
-      padding: 8px 4px;
+      padding: 10px 4px;
       font-size: 13px;
     }
+    .my-row > div { min-width: 0; }
     .editor-stack {
       display: grid;
       gap: 6px;
     }
     .editor-line {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 6px;
+    }
+    .editor-line input {
+      min-width: 0;
+      width: 100%;
+    }
+    .my-row-actions {
       display: flex;
       align-items: center;
       gap: 6px;
       flex-wrap: wrap;
-    }
-    .editor-line input {
-      flex: 1;
-      min-width: 220px;
     }
     .note-line {
       margin-top: 4px;
       font-size: 12px;
       color: var(--muted);
       white-space: pre-wrap;
+      overflow-wrap: anywhere;
     }
     .csv-table-wrap { margin-top: 8px; max-height: 340px; overflow: auto; }
-    .csv-table { width: 100%; border-collapse: collapse; }
+    .csv-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     .csv-table th, .csv-table td {
       text-align: left;
       border-top: 1px solid var(--line);
       padding: 8px 6px;
       font-size: 12px;
       vertical-align: top;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
     .csv-table th { background: #faf6ef; position: sticky; top: 0; z-index: 1; }
     .csv-table .action-cell {
-      white-space: nowrap;
+      white-space: normal;
       min-width: 128px;
     }
     .csv-table .inline-editor {
@@ -162,6 +256,7 @@
       flex-wrap: wrap;
     }
     .csv-table .inline-editor input {
+      width: min(100%, 320px);
       min-width: 220px;
     }
     .csv-table .action-stack {
@@ -178,6 +273,9 @@
     }
     .my-row:first-child { border-top: none; }
     a.link-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       text-decoration: none;
       color: #fff;
       background: linear-gradient(180deg, var(--accent), var(--accent2));
@@ -185,15 +283,43 @@
       padding: 6px 10px;
       font-size: 12px;
       font-weight: 600;
+      line-height: 1.2;
+      max-width: 100%;
+      white-space: nowrap;
     }
-    .action-group { display: flex; align-items: center; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+    .action-group { display: flex; align-items: center; gap: 6px; justify-content: flex-start; flex-wrap: wrap; }
     .action-delete { background: #be123c; }
     .muted-link { color: var(--muted); text-decoration: none; }
     .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
     @media (max-width: 980px) {
       .header-grid, .sub-grid { grid-template-columns: 1fr; }
-      .my-row { grid-template-columns: 1fr; }
       .right { margin-left: 0; }
+      .action-group { justify-content: flex-start; }
+      .leader-metrics { grid-template-columns: repeat(auto-fit, minmax(108px, 1fr)); }
+      .my-list { max-height: min(58vh, 520px); }
+      .csv-table .inline-editor,
+      .csv-table .kaggle-editor { display: flex; width: 100%; }
+      .csv-table .inline-editor input,
+      .csv-table .kaggle-editor input { min-width: 0; width: 100%; }
+    }
+    @media (max-width: 720px) {
+      .wrap { padding: 12px; }
+      .title { font-size: 21px; }
+      .leader-metrics { grid-template-columns: 1fr; }
+      .editor-line { grid-template-columns: 1fr; }
+      #submission-upload-file,
+      #submission-upload-name,
+      #submission-upload-note,
+      #submission-upload-kaggle-score,
+      #submission-upload-kind,
+      #submission-upload-btn {
+        width: 100%;
+      }
+      a.link-btn,
+      .action-group button {
+        width: auto;
+        max-width: 100%;
+      }
     }
   </style>
 </head>
@@ -249,6 +375,75 @@
           <div class="small">아직 GT 편집 이력이 없습니다.</div>
         {% endif %}
       </div>
+
+      <div style="margin-top:10px; border-top:1px solid var(--line); padding-top:10px;">
+        <div class="row" style="justify-content: space-between;">
+          <strong>Submission Error TOP 3</strong>
+          <span class="small">총 Error = Time + 위치 + Type Error</span>
+        </div>
+
+        <div class="small" style="margin-top:6px;"><strong>TEST</strong></div>
+        {% if submission_error_leaderboard.test %}
+          {% for item in submission_error_leaderboard.test %}
+          <div class="leader-item">
+            <span class="rank">{{ item.rank }}</span>
+            <div class="leader-main">
+              <div class="leader-file">
+                <strong>{{ item.filename }}</strong>
+                <div class="small leader-owner">owner: {{ item.owner }}</div>
+              </div>
+              <div class="leader-metrics">
+                <div class="metric-kv">
+                  <span class="label">Time Error</span>
+                  <span class="value">{% if item.time_avg is not none %}{{ '%.3f'|format(item.time_avg) }}s{% else %}-{% endif %}</span>
+                </div>
+                <div class="metric-kv">
+                  <span class="label">위치 Error</span>
+                  <span class="value">{% if item.loc_avg is not none %}{{ '%.5f'|format(item.loc_avg) }}{% else %}-{% endif %}</span>
+                </div>
+                <div class="metric-kv">
+                  <span class="label">Type 정확도</span>
+                  <span class="value">{% if item.type_accuracy is not none %}{{ '%.1f'|format(item.type_accuracy * 100) }}%{% else %}-{% endif %} ({{ item.type_match }}/{{ item.type_total }})</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="small">표시 가능한 test submission이 없습니다.</div>
+        {% endif %}
+
+        <div class="small" style="margin-top:10px;"><strong>TRAIN</strong></div>
+        {% if submission_error_leaderboard.train %}
+          {% for item in submission_error_leaderboard.train %}
+          <div class="leader-item">
+            <span class="rank">{{ item.rank }}</span>
+            <div class="leader-main">
+              <div class="leader-file">
+                <strong>{{ item.filename }}</strong>
+                <div class="small leader-owner">owner: {{ item.owner }}</div>
+              </div>
+              <div class="leader-metrics">
+                <div class="metric-kv">
+                  <span class="label">Time Error</span>
+                  <span class="value">{% if item.time_avg is not none %}{{ '%.3f'|format(item.time_avg) }}s{% else %}-{% endif %}</span>
+                </div>
+                <div class="metric-kv">
+                  <span class="label">위치 Error</span>
+                  <span class="value">{% if item.loc_avg is not none %}{{ '%.5f'|format(item.loc_avg) }}{% else %}-{% endif %}</span>
+                </div>
+                <div class="metric-kv">
+                  <span class="label">Type 정확도</span>
+                  <span class="value">{% if item.type_accuracy is not none %}{{ '%.1f'|format(item.type_accuracy * 100) }}%{% else %}-{% endif %} ({{ item.type_match }}/{{ item.type_total }})</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="small">표시 가능한 train submission이 없습니다.</div>
+        {% endif %}
+      </div>
     </div>
 
     <div class="card">
@@ -258,9 +453,9 @@
       </div>
       <div class="row" style="margin-top:8px;">
         <input id="submission-upload-file" type="file" accept=".csv" />
-        <input id="submission-upload-name" placeholder="optional filename" style="min-width:220px;" />
-        <input id="submission-upload-note" placeholder="CSV 메모 (예: v2a late-fusion 실험)" style="min-width:280px;" />
-        <input id="submission-upload-kaggle-score" type="number" step="any" placeholder="kaggle score (test 선택 시 선택입력)" style="min-width:260px;" />
+        <input id="submission-upload-name" placeholder="optional filename" style="width:clamp(180px, 22vw, 280px);" />
+        <input id="submission-upload-note" placeholder="CSV 메모 (예: v2a late-fusion 실험)" style="width:clamp(200px, 30vw, 420px);" />
+        <input id="submission-upload-kaggle-score" type="number" step="any" placeholder="kaggle score (test 선택 시 선택입력)" style="width:clamp(170px, 20vw, 260px);" />
         <select id="submission-upload-kind">
           <option value="test">test</option>
           <option value="train">train</option>
@@ -292,15 +487,15 @@
             <div class="note-line">Kaggle score: {% if item.kaggle_score is not none %}{{ '%.6f'|format(item.kaggle_score) }}{% else %}-{% endif %}</div>
             {% endif %}
           </div>
-          <span class="pill {% if item.kind == 'train' %}tag-train{% else %}tag-test{% endif %}">
-            {{ item.kind|upper }}
-          </span>
-          <div class="action-group">
+          <div class="my-row-actions action-group">
+            <span class="pill {% if item.kind == 'train' %}tag-train{% else %}tag-test{% endif %}">
+              {{ item.kind|upper }}
+            </span>
             <a class="link-btn" href="/submission?submission={{ item.submission|urlencode }}&source={{ item.kind }}">열기</a>
             <a class="link-btn" href="/api/submission/download?submission={{ item.submission|urlencode }}" style="background:#334155;">다운로드</a>
             <button type="button" class="action-delete" data-submission-delete="{{ item.submission }}">삭제</button>
           </div>
-          <div style="grid-column: 1 / -1;">
+          <div>
             <div class="editor-stack">
               <div class="editor-line">
                 <input id="personal-note-{{ loop.index }}" value="{{ item.note or '' }}" placeholder="이 CSV 메모" />
@@ -323,7 +518,7 @@
 
   <div class="card" style="margin-top:12px;">
     <div class="row" style="justify-content: space-between;">
-      <strong>전체 CSV 업로드 목록 (현재 파일 기준)</strong>
+      <strong>전체 CSV 업로드 목록</strong>
       <span class="small">삭제된 파일은 목록에 보이지 않습니다.</span>
     </div>
     <div class="csv-table-wrap">

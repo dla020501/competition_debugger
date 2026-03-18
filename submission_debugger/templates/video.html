@@ -21,6 +21,7 @@
       margin: 0;
       color: var(--ink);
       font-family: "IBM Plex Sans", "Noto Sans KR", sans-serif;
+      line-height: 1.42;
       background:
         radial-gradient(1200px 420px at 8% -10%, #fff6df 0%, transparent 65%),
         radial-gradient(900px 360px at 95% 0%, #e7f6f3 0%, transparent 70%),
@@ -66,6 +67,7 @@
       border-radius: 4px;
     }
     .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+    .row > * { min-width: 0; }
     label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
     input, select, button, textarea { font: inherit; padding: 7px 9px; border-radius: 10px; border: 1px solid var(--line); }
     input:focus, select:focus, textarea:focus {
@@ -75,11 +77,16 @@
       background: #fff;
     }
     button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       cursor: pointer;
       background: linear-gradient(180deg, var(--accent), var(--accent-2));
       color: white;
       border: none;
       font-weight: 600;
+      line-height: 1.25;
+      white-space: normal;
       transition: transform 0.12s ease, box-shadow 0.16s ease, opacity 0.16s ease;
       box-shadow: 0 4px 12px rgba(15, 118, 110, 0.28);
     }
@@ -94,6 +101,18 @@
       font-weight: 500;
     }
     .badge { padding: 2px 8px; border-radius: 99px; border: 1px solid var(--line); font-size: 12px; }
+    .page-title {
+      margin: 8px 0 0 0;
+      font-size: 20px;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .badge {
+      max-width: min(100%, 460px);
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      background: #fff;
+    }
     .history { max-height: 360px; overflow: auto; font-size: 12px; }
     .pred { color: var(--pred); }
     .gt { color: var(--gt); }
@@ -168,9 +187,71 @@
       padding: 0;
       margin: 0;
     }
+    .event-marker-rail {
+      position: relative;
+      margin-top: 8px;
+      padding-top: 12px;
+      height: 42px;
+      border-top: 2px solid #cbd5e1;
+      border-radius: 8px;
+      background: linear-gradient(180deg, #f8fafc, #eef2f7);
+      overflow: hidden;
+    }
+    .event-marker-item {
+      position: absolute;
+      top: 2px;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .event-marker-stick {
+      width: 2px;
+      height: 16px;
+      background: currentColor;
+      border-radius: 2px;
+    }
+    .event-marker-label {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 999px;
+      border: 1px solid currentColor;
+      background: #fff;
+      line-height: 1.3;
+    }
+    .event-marker-item.pred {
+      color: var(--pred);
+    }
+    .event-marker-item.gt {
+      color: var(--gt);
+    }
+    .event-marker-empty {
+      padding: 9px;
+      font-size: 12px;
+      color: var(--muted);
+    }
     @media (max-width: 980px) {
       .grid { grid-template-columns: 1fr; }
       #gt-panel { position: static; }
+      .video-control-row button,
+      .video-meta-row .inline-field {
+        width: 100%;
+      }
+      .video-meta-row {
+        align-items: flex-start;
+      }
+      .playback-rate-group {
+        width: 100%;
+      }
+    }
+    @media (max-width: 720px) {
+      .wrap { padding: 12px; }
+      .page-title { font-size: 18px; }
+      .playback-rate-btn { min-width: 42px; padding: 4px 7px; }
     }
   </style>
 </head>
@@ -179,9 +260,9 @@
   <div class="row" style="justify-content: space-between;">
     <div>
       <a href="/submission?submission={{ submission|urlencode }}&source={{ source }}">← 목록으로</a>
-      <h3 style="margin:8px 0 0 0;">{{ video_path }}</h3>
+      <h3 class="page-title">{{ video_path }}</h3>
     </div>
-    <div class="badge">source: {{ source }} / A: {{ submission }}{% if compare_submission %} / B: {{ compare_submission }}{% endif %}{% if compare_submission2 %} / C: {{ compare_submission2 }}{% endif %}</div>
+    <div class="badge">source: {{ source }} / submission: {{ submission }}</div>
   </div>
 
   <div class="grid">
@@ -192,23 +273,16 @@
         <div id="video-hud" class="video-hud"></div>
         <div id="zoom-selection-box" class="zoom-selection-box" hidden></div>
       </div>
-      <div class="row" style="margin-top:8px;">
+      <div class="row video-control-row" style="margin-top:8px;">
         <button id="seek-pred" class="ghost" type="button">Pred 시점으로 이동</button>
-        <button id="seek-pred-b" class="ghost" type="button">Pred-B 시점</button>
-        <button id="seek-pred-c" class="ghost" type="button">Pred-C 시점</button>
         <button id="seek-gt" class="ghost" type="button">GT 시점으로 이동</button>
         <input id="zoom-mode" type="checkbox" style="display:none;" />
         <button id="toggle-zoom-mode" class="ghost" type="button">영역 확대 선택: OFF</button>
         <button id="reset-zoom" class="ghost" type="button">확대 해제</button>
-        <div class="overlay-toggle-group" role="group" aria-label="오버레이 표시">
-          <label class="overlay-toggle"><input id="show-a" type="checkbox" checked /> A</label>
-          <label class="overlay-toggle"><input id="show-b" type="checkbox" checked /> B</label>
-          <label class="overlay-toggle"><input id="show-c" type="checkbox" checked /> C</label>
-          <label class="overlay-toggle"><input id="show-gt" type="checkbox" checked /> GT</label>
-        </div>
-        <span class="small" id="cursor-pos">오버레이 보기 모드</span>
+        <span class="small" id="cursor-pos">오버레이 보기 모드 (Pred/GT)</span>
       </div>
-      <div class="row" style="margin-top:4px; gap:6px;">
+      <div id="event-marker-rail" class="event-marker-rail" aria-label="Pred GT 타임마커"></div>
+      <div class="row video-meta-row" style="margin-top:4px; gap:6px;">
         <div class="small" id="video-status" style="flex:1;"></div>
         <div class="small inline-field">
           <span>재생 배속</span>
