@@ -5,6 +5,7 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import math
 import mimetypes
 import os
@@ -16,6 +17,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlparse
+
+logger = logging.getLogger("submission_debugger")
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -68,9 +71,27 @@ TEST_DATASET_TAG_OPTIONS = [
 ]
 DATASET_TAG_LABELS = {item["value"]: item["label"] for item in TEST_DATASET_TAG_OPTIONS}
 
-app = FastAPI(title="Submission Debugger", version="0.1.0")
+app = FastAPI(
+    title="Submission Debugger",
+    version="0.1.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';"
+    )
+    return response
 
 
 @app.middleware("http")
@@ -1204,8 +1225,8 @@ def list_users_with_permissions() -> list[dict[str, Any]]:
 def create_user(username: str, password: str) -> None:
     if not is_valid_username(username):
         raise HTTPException(status_code=400, detail="Invalid username format")
-    if len(password) < 4:
-        raise HTTPException(status_code=400, detail="Password must be at least 4 characters")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     salt = secrets.token_hex(16)
     pwd_hash = hash_password(password, salt)
     now = utc_now_iso()
@@ -1225,8 +1246,8 @@ def create_user(username: str, password: str) -> None:
 
 
 def change_password(username: str, new_password: str) -> None:
-    if len(new_password) < 4:
-        raise HTTPException(status_code=400, detail="Password must be at least 4 characters")
+    if len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     salt = secrets.token_hex(16)
     pwd_hash = hash_password(new_password, salt)
     with get_db() as conn:
@@ -1234,6 +1255,7 @@ def change_password(username: str, new_password: str) -> None:
         if cur.fetchone() is None:
             raise HTTPException(status_code=404, detail="User not found")
         conn.execute("UPDATE users SET salt = ?, password_hash = ? WHERE username = ?", (salt, pwd_hash, username))
+        conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
         conn.commit()
 
 
@@ -1731,6 +1753,11 @@ def get_submission_error_leaderboard(limit: int = 3) -> dict[str, list[dict[str,
 def startup() -> None:
     init_db()
     ensure_default_admin_user()
+    if DEFAULT_ADMIN_PASS in ("change-me", "change-this-now", ""):
+        logger.warning(
+            "SECURITY WARNING: The admin account is using a default password. "
+            "Set the SD_ADMIN_PASS environment variable to a strong, unique password."
+        )
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -2357,7 +2384,9 @@ async def api_submission_upload(
 
 @app.get("/api/submission/global-download")
 def api_submission_global_download(request: Request, submission: str) -> FileResponse:
-    _ = require_user(request)
+    user = require_user(request)
+    if not can_access_submission(user, submission):
+        raise HTTPException(status_code=403, detail="Submission access denied")
     kind, owner, filename = parse_submission_ref(submission)
     if kind == "shared":
         target = ROOT_DIR / filename
